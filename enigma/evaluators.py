@@ -267,6 +267,15 @@ class Evaluator:
     # ---- prm: step-level process reward via sidecar -------------------------
 
     async def _prm(self, task: TaskSpec, output: str) -> EvalResult:
+        # A PRM scores step validity, not completeness — a truncated solution
+        # with valid steps would pass. Optional completeness gate first.
+        require = self.spec.get("require", r"final answer")
+        if require:
+            try:
+                if not re.search(require, output, re.IGNORECASE):
+                    return EvalResult(0.0, f"incomplete: output never matched /{require}/ — finish with a final answer")
+            except re.error as e:
+                return EvalResult(0.0, f"invalid 'require' pattern: {e}")
         steps = _split_steps(output)
         if not steps:
             return EvalResult(0.0, "output has no scoreable steps")
