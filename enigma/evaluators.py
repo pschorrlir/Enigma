@@ -6,6 +6,9 @@ Kinds:
   json_schema  {"schema": {...}}                  — minimal schema subset validator
   regex        {"pattern": "...", "flags": "is"}  — search against output
   contains     {"all": [...], "any": [...]}       — substring checks
+  prm          {"aggregate": "min|mean|prod|last"} — step-level scoring via the
+               Qwen2.5-Math-PRM sidecar (sidecar/prm_server.py); best for
+               multi-step reasoning/derivation tasks
 """
 
 from __future__ import annotations
@@ -41,12 +44,14 @@ class Evaluator:
         ollama: OllamaClient | None,
         judge_model: str,
         cloud: AnthropicClient | None = None,
+        prm_url: str = "http://127.0.0.1:8799",
     ):
         self.spec = spec
         self.kind = spec.get("kind", "llm_judge")
         self._ollama = ollama
         self._judge_model = judge_model
         self._cloud = cloud
+        self._prm_url = str(spec.get("url", prm_url)).rstrip("/")
         self._rubric: list[dict[str, Any]] | None = None
         self._rubric_failed = False
 
@@ -62,6 +67,8 @@ class Evaluator:
                 return self._contains(output)
             case "llm_judge":
                 return await self._llm_judge(task, output)
+            case "prm":
+                return await self._prm(task, output)
             case other:
                 return EvalResult(0.0, f"unknown evaluator kind: {other}")
 
@@ -255,6 +262,51 @@ class Evaluator:
         except (TypeError, ValueError):
             return EvalResult(0.5, "judge produced non-numeric score")
         return EvalResult(score, str(obj.get("feedback", "")))
+
+
+    # ---- prm: step-level process reward via sidecar -------------------------
+
+    async def _prm(self, task: TaskSpec, output: str) -> EvalResult:
+        steps = _split_steps(output)
+        if not steps:
+            return EvalResult(0.0, "output has no scoreable steps")
+        query = task.description + (("\n\n" + task.input_as_text()[:2000]) if task.input is not None else "")
+        try:
+            r = await self._ollama.http.post(
+                f"{self._prm_url}/score",
+                json={"query": query, "steps": steps},
+                timeout=90.0,
+            )
+        except Exception as e:
+            return EvalResult(0.0, f"prm sidecar unreachable at {self._prm_url}: {e}")
+        if r.status_code != 200:
+            detail = r.text[:200]
+            return EvalResult(0.0, f"prm sidecar error {r.status_code}: {detail}")
+        data = r.json()
+        scores = data.get("step_scores", [])
+        if not scores:
+            return EvalResult(0.0, "prm returned no step scores")
+        aggregate = self.spec.get("aggregate", "min")
+        score = float(data.get(aggregate, min(scores)))
+        weakest = min(range(len(scores)), key=lambda i: scores[i])
+        fb = f"step scores (agg={aggregate}): " + ", ".join(f"{s:.2f}" for s in scores)
+        if scores[weakest] < 0.8:
+            fb += f" | weakest step #{weakest + 1}: \"{steps[weakest][:200]}\""
+        return EvalResult(min(1.0, max(0.0, score)), fb)
+
+
+def _split_steps(output: str) -> list[str]:
+    """Split a solution into reasoning steps: paragraph blocks first, then
+    numbered/bulleted lines, then sentences as a last resort."""
+    blocks = [b.strip() for b in re.split(r"\n\s*\n", output) if b.strip()]
+    if len(blocks) >= 2:
+        return blocks[:32]
+    lines = [l.strip() for l in output.splitlines() if l.strip()]
+    numbered = [l for l in lines if re.match(r"^(\d+[.)]|[-*•])\s+", l)]
+    if len(numbered) >= 2:
+        return numbered[:32]
+    sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", output) if len(s.strip()) > 10]
+    return sentences[:32]
 
 
 def _split_statements(tests: str) -> list[str]:

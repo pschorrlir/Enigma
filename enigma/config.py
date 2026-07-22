@@ -64,6 +64,9 @@ class Config:
     concurrency: int = field(default_factory=lambda: _env_int("ENIGMA_CONCURRENCY", 2))
     poll_interval_s: float = field(default_factory=lambda: _env_float("ENIGMA_POLL_INTERVAL", 1.0))
 
+    # PRM sidecar (step-level process reward model, see sidecar/)
+    prm_url: str = field(default_factory=lambda: _env("ENIGMA_PRM_URL", "http://127.0.0.1:8799"))
+
     # Memory / self-learning
     recall_top_k: int = field(default_factory=lambda: _env_int("ENIGMA_RECALL_K", 4))
     evolved_styles_max: int = field(default_factory=lambda: _env_int("ENIGMA_EVOLVED_STYLES_MAX", 4))

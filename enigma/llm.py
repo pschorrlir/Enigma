@@ -33,6 +33,10 @@ class OllamaClient:
         self._http = http
         self._base = cfg.ollama_host.rstrip("/")
 
+    @property
+    def http(self) -> httpx.AsyncClient:
+        return self._http
+
     async def available(self) -> bool:
         try:
             r = await self._http.get(f"{self._base}/api/tags", timeout=5.0)

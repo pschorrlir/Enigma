@@ -1,5 +1,7 @@
 .enigma/
 .env
+models/
+sidecar/.venv/
 __pycache__/
 *.egg-info/
 build/

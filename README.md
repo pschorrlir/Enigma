@@ -95,6 +95,30 @@ partial credit per assert), `json_schema` (dependency-free subset validator), `r
 State lives in `.enigma/enigma.db` (WAL). Killing the daemon requeues in-flight tasks
 on next start.
 
+## PRM sidecar (step-level verification)
+
+The `prm` evaluator scores each reasoning step of an output with
+**Qwen2.5-Math-PRM-7B** (best open ≤8B process reward model) served by a
+sidecar in its own venv — the main environment stays httpx-only. Scoring is a
+single forward pass, so CPU (bf16 + AVX-512) works.
+
+```bash
+# one-time: model weights into models/, then
+sidecar/setup.sh            # CPU torch; use --cuda for GPU wheels
+sidecar/run.sh              # serves http://127.0.0.1:8799
+```
+
+Task usage — best for multi-step reasoning/derivations:
+
+```json
+{"description": "Prove ... step by step.",
+ "evaluator": {"kind": "prm", "aggregate": "min"}}
+```
+
+`aggregate` is one of `min` (default: weakest-step, strictest), `mean`, `prod`,
+`last`. Feedback names the weakest step, which feeds the reflection loop.
+Override the endpoint with `ENIGMA_PRM_URL` or per-task `"url"`.
+
 ## Note on `python_tests`
 
 Candidate code runs in a subprocess with `-I` (isolated mode) and a timeout — that

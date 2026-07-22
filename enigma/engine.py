@@ -126,7 +126,7 @@ class Engine:
         for row in self.store.list_styles(context):
             style_hints[f"evolved:{row['id']}"] = row["hint"]
         arms = build_arms((model,), tuple(style_hints))
-        evaluator = Evaluator(task.evaluator, self.ollama, model, self.cloud)
+        evaluator = Evaluator(task.evaluator, self.ollama, model, self.cloud, self.cfg.prm_url)
         history = self.store.episode_history(context)
 
         query = task.description + " " + task.input_as_text()[:500]
