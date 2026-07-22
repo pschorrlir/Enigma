@@ -1,0 +1,6 @@
+.enigma/
+.env
+__pycache__/
+*.egg-info/
+build/
+.venv/
