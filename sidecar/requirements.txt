@@ -1,4 +1,5 @@
 torch>=2.4
-transformers>=4.44
+# <5: the PRM's custom remote code (modeling_qwen2_rm.py) targets the 4.x API
+transformers>=4.44,<5
 accelerate>=0.33
 safetensors>=0.4

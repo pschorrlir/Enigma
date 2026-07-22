@@ -60,7 +60,9 @@ class PRM:
         if input_ids.shape[1] > MAX_TOKENS:
             return []  # too long to score faithfully; caller falls back
         input_ids = input_ids.to(self.model.device)
-        outputs = self.model(input_ids=input_ids)
+        # use_cache=False: single forward pass, and the model's remote code
+        # trips over newer DynamicCache APIs when caching is on.
+        outputs = self.model(input_ids=input_ids, use_cache=False)
         token_masks = input_ids == self.step_sep_id
         # Official extraction: softmax over the 2-class head at each <extra_0>,
         # keep P(step is correct).
