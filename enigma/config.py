@@ -38,19 +38,25 @@ class Config:
         )
     )
     embed_model: str = field(default_factory=lambda: _env("ENIGMA_EMBED_MODEL", "nomic-embed-text"))
+    num_ctx: int = field(default_factory=lambda: _env_int("ENIGMA_NUM_CTX", 8192))
+    keep_alive: str = field(default_factory=lambda: _env("ENIGMA_KEEP_ALIVE", "15m"))
 
-    # Cloud frontier model (Anthropic), used only for cohesion passes
+    # Cloud frontier model (Anthropic), used only for cohesion/rubric passes
     anthropic_api_key: str = field(default_factory=lambda: _env("ANTHROPIC_API_KEY", ""))
     cloud_model: str = field(default_factory=lambda: _env("ENIGMA_CLOUD_MODEL", "claude-sonnet-5"))
     cloud_max_calls_per_task: int = field(default_factory=lambda: _env_int("ENIGMA_CLOUD_MAX_CALLS", 2))
+    cloud_max_tokens: int = field(default_factory=lambda: _env_int("ENIGMA_CLOUD_MAX_TOKENS", 8192))
 
     # Iteration loop
     max_iterations: int = field(default_factory=lambda: _env_int("ENIGMA_MAX_ITERATIONS", 8))
-    candidates_per_iteration: int = field(default_factory=lambda: _env_int("ENIGMA_CANDIDATES", 3))
+    # Adaptive best-of-N: start with candidates_min, extend toward candidates_max
+    # when scores are dispersed and no candidate hit the target.
+    candidates_min: int = field(default_factory=lambda: _env_int("ENIGMA_CANDIDATES_MIN", 2))
+    candidates_max: int = field(default_factory=lambda: _env_int("ENIGMA_CANDIDATES", 4))
     target_score: float = field(default_factory=lambda: _env_float("ENIGMA_TARGET_SCORE", 0.95))
-    # Escalate to the cloud after this many iterations without improvement.
     patience: int = field(default_factory=lambda: _env_int("ENIGMA_PATIENCE", 2))
     archive_size: int = field(default_factory=lambda: _env_int("ENIGMA_ARCHIVE_SIZE", 4))
+    novelty_threshold: float = field(default_factory=lambda: _env_float("ENIGMA_NOVELTY_THRESHOLD", 0.97))
     task_timeout_s: float = field(default_factory=lambda: _env_float("ENIGMA_TASK_TIMEOUT", 900.0))
     request_timeout_s: float = field(default_factory=lambda: _env_float("ENIGMA_REQUEST_TIMEOUT", 180.0))
 
@@ -58,8 +64,10 @@ class Config:
     concurrency: int = field(default_factory=lambda: _env_int("ENIGMA_CONCURRENCY", 2))
     poll_interval_s: float = field(default_factory=lambda: _env_float("ENIGMA_POLL_INTERVAL", 1.0))
 
-    # Memory recall
+    # Memory / self-learning
     recall_top_k: int = field(default_factory=lambda: _env_int("ENIGMA_RECALL_K", 4))
+    evolved_styles_max: int = field(default_factory=lambda: _env_int("ENIGMA_EVOLVED_STYLES_MAX", 4))
+    episode_retention_days: int = field(default_factory=lambda: _env_int("ENIGMA_EPISODE_RETENTION_DAYS", 30))
 
     @property
     def db_path(self) -> Path:
@@ -79,5 +87,9 @@ class Config:
 
 def load_config() -> Config:
     cfg = Config()
+    if not cfg.local_models:
+        raise SystemExit("ENIGMA_LOCAL_MODELS is empty — set at least one Ollama model name")
+    if cfg.candidates_min < 1 or cfg.candidates_max < cfg.candidates_min:
+        raise SystemExit("candidate bounds invalid: need 1 <= ENIGMA_CANDIDATES_MIN <= ENIGMA_CANDIDATES")
     cfg.ensure_home()
     return cfg

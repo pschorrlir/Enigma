@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "enigma-engine"
-version = "0.1.0"
+version = "0.2.0"
 description = "Background self-learning task engine: local Ollama models with cloud frontier cohesion"
 requires-python = ">=3.13"
 dependencies = ["httpx>=0.27"]

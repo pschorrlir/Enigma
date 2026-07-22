@@ -48,6 +48,8 @@ class TaskSpec:
         if kind not in VALID_OUTPUT_KINDS:
             raise ValueError(f"output.kind must be one of {VALID_OUTPUT_KINDS}")
         evaluator = data.get("evaluator") or {"kind": "llm_judge"}
+        if not isinstance(evaluator, dict) or not isinstance(evaluator.get("kind", "llm_judge"), str):
+            raise ValueError('evaluator must be an object like {"kind": "python_tests", ...}')
         return cls(
             description=desc,
             input=data.get("input"),
@@ -85,6 +87,7 @@ class Candidate:
     score: float = 0.0
     feedback: str = ""
     origin: str = "local"  # local | cloud
+    confidence: float | None = None  # mean token logprob, when available
 
 
 @dataclass(slots=True)
@@ -95,3 +98,6 @@ class TaskResult:
     iterations: int
     cloud_calls: int
     elapsed_s: float
+    # Carried for post-task learning (playbook credit, contrastive distillation).
+    worst: Candidate | None = None
+    recalled_insights: list[int] = field(default_factory=list)

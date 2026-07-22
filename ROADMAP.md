@@ -1,5 +1,10 @@
 # Next iteration roadmap
 
+> **Status (v0.2.0):** P0, P1, and P2 items 1–9 are implemented. Remaining: P2 item
+> 10 (process reward model — needs a PRM model pulled into Ollama) and the training
+> sidecar half of item 11 (`enigma export-corpus` ships the data flywheel); plus the
+> API-shape prep section.
+
 Synthesized from three parallel reviews (correctness, architecture/performance,
 2025–26 research scout) of commit `99c49f8`.
 

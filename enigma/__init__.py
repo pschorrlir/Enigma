@@ -5,4 +5,4 @@ in only when progress stalls (cascade escalation). Every finished task
 distills a reusable insight recalled on future tasks.
 """
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
