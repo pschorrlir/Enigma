@@ -183,3 +183,128 @@ async def run_skill(name: str, args: str, cexec) -> str:
     if entry is None:
         return ("unknown skill '%s'; available:\n" % name) + skill_docs()
     return await entry[1](cexec, args)
+
+
+# ---- interactive step engine (pwn_stdin / pwn_tcp) ----------------------------
+# Leak-and-deliver in ONE session: expect a banner, bind the leak, deliver the
+# payload — the only shape that works under ASLR (rung 2 autopsy 2026-07-28:
+# one-shot deliver_stdin spawns a fresh process, so leaked runtime addresses
+# were always garbage).
+
+_MAX_STEPS = 8
+
+_LEAK_RE = re.compile(
+    r"\{(leak\d*)\s*(?:([+-])\s*(0x[0-9a-fA-F]+|\d+))?\}"  # {leak}, {leak-0xb9}
+    r"(?:\s*([+-])\s*(0x[0-9a-fA-F]+|\d+))?")              # or {leak}-0xb9
+
+
+def render_template(template: str, leaks: dict) -> bytes:
+    """Substitute {leak}/{leakN} with captured integers (offset inside the
+    braces `{leak-0xb9}` or just outside `{leak}-0xb9` — both accepted), then
+    parse terms: 'X*N' repeats, p32/p64 packed addresses; anything else is
+    LITERAL text (menu answers like '1'). Raises ValueError only on unknown
+    leak refs or an empty template."""
+    def sub(m):
+        name = m.group(1)
+        if name not in leaks:
+            raise ValueError(f"template references {{{name}}} but no expect "
+                             f"captured it (captured: {sorted(leaks) or 'none'})")
+        v = leaks[name]
+        for sign, off in ((m.group(2), m.group(3)), (m.group(4), m.group(5))):
+            if off:
+                delta = int(off, 0)
+                v = v + delta if sign == "+" else v - delta
+        return hex(v)
+    template = _LEAK_RE.sub(sub, template)
+    out = b""
+    for term in template.split("+"):
+        term = term.strip()
+        if not term:
+            continue
+        m = re.fullmatch(r"(.)\s*\*\s*(\d+)", term)
+        if m:
+            out += m.group(1).encode("latin-1") * int(m.group(2))
+            continue
+        m = re.fullmatch(r"p(32|64)\(\s*(0x[0-9a-fA-F]+|\d+)\s*\)", term)
+        if m:
+            fmt = "<I" if m.group(1) == "32" else "<Q"
+            out += struct.pack(fmt, int(m.group(2), 0))
+            continue
+        out += term.encode("latin-1")  # literal text term (menu answers etc.)
+    if not out:
+        raise ValueError("empty send template")
+    return out
+
+
+def parse_steps(arg_tail: str):
+    """Parse the step grammar into (steps, hex8, error).
+
+    Steps: expect:<regex> (single non-space token, one capture group binds the
+    leak) and send:<template> (may contain spaces; runs to the next step
+    token). Shorthand: '<regex> <template...>' == expect+send; inside explicit
+    mode 'expect:<regex> <template...>' nests the same shorthand, and that
+    unlabeled send must be the final step. Bare 'hex8' flags ExploitGym's
+    8-byte-hex size prefix on the final send."""
+    tokens = arg_tail.split()
+    hex8 = "hex8" in tokens
+    tokens = [t for t in tokens if t != "hex8"]
+    explicit = any(t.startswith("expect:") or t.startswith("send:") for t in tokens)
+    steps: list = []
+
+    if not explicit:
+        if len(tokens) < 2:
+            return None, False, (r"usage: <regex> <template>  e.g. "
+                                 r"main:\s*(0x[0-9a-f]+) A*72 + p64({leak}-0xb9)")
+        steps = [("expect", tokens[0]), ("send", " ".join(tokens[1:]))]
+    else:
+        cur_op = None
+        cur_val: list = []
+        implicit_send = None  # steps-index of an unlabeled send, if any
+
+        def flush():
+            nonlocal cur_op, cur_val
+            if cur_op is not None:
+                steps.append((cur_op, " ".join(cur_val).strip()))
+            cur_op, cur_val = None, []
+
+        for t in tokens:
+            if t.startswith("expect:") or t.startswith("send:"):
+                flush()
+                op, _, first = t.partition(":")
+                cur_op = op
+                cur_val = [first] if first else []
+            else:
+                if cur_op is None:
+                    return None, False, ("step text %r outside any expect:/send: "
+                                         "step" % t)
+                if cur_op == "expect" and cur_val:
+                    # expect takes ONE token; trailing bare tokens are the
+                    # shorthand send template ('expect:R T...' == expect R,
+                    # send T). It must be the FINAL step — there is no
+                    # delimiter for its end.
+                    flush()
+                    cur_op, cur_val = "send", [t]
+                    implicit_send = len(steps)
+                else:
+                    cur_val.append(t)
+        flush()
+        if implicit_send is not None and implicit_send != len(steps) - 1:
+            return None, False, ("unlabeled send template must be the FINAL "
+                                 "step; prefix earlier sends with send:")
+
+    if len(steps) > _MAX_STEPS:
+        return None, False, f"too many steps ({len(steps)}); max {_MAX_STEPS}"
+    if not any(op == "send" for op, _ in steps):
+        return None, False, "no send step — nothing to deliver"
+    for op, val in steps:
+        if not val:
+            return None, False, f"empty {op} step"
+        if op == "expect":
+            if " " in val:
+                return None, False, (rf"expect regex must be ONE non-space token "
+                                     rf"(got {val!r}); write e.g. main:\s*(0x[0-9a-f]+)")
+            try:
+                re.compile(val)
+            except re.error as e:
+                return None, False, f"bad expect regex {val!r}: {e}"
+    return steps, hex8, None

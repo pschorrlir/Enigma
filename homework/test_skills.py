@@ -8,7 +8,8 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
 
-from enigma.skills import cyclic, cyclic_find, parse_payload, run_skill, skill_docs  # noqa: E402
+from enigma.skills import (cyclic, cyclic_find, parse_payload, parse_steps,  # noqa: E402
+                           render_template, run_skill, skill_docs)  # noqa: E402
 
 
 def _fake_cexec(canned):
@@ -123,6 +124,62 @@ def test_toolbox_skill_dispatch():
     asyncio.run(go())
 
 
+def test_parse_steps_shorthand():
+    steps, hex8, err = parse_steps(r"main:\s*(0x[0-9a-f]+) A*72 + p64({leak}-0xb9)")
+    assert err is None, err
+    assert steps == [("expect", r"main:\s*(0x[0-9a-f]+)"),
+                     ("send", "A*72 + p64({leak}-0xb9)")], steps
+    assert hex8 is False
+
+
+def test_parse_steps_explicit_with_hex8():
+    steps, hex8, err = parse_steps(
+        r"expect:Choice: send:1 expect:main:\s*(0x[0-9a-f]+) A*72 + p64({leak}-0xb9) hex8")
+    assert err is None, err
+    assert steps == [("expect", "Choice:"), ("send", "1"),
+                     ("expect", r"main:\s*(0x[0-9a-f]+)"),
+                     ("send", "A*72 + p64({leak}-0xb9)")], steps
+    assert hex8 is True
+
+
+def test_parse_steps_errors():
+    # missing template
+    steps, _, err = parse_steps(r"main:\s*(0x[0-9a-f]+)")
+    assert steps is None and err
+    # no send step
+    steps, _, err = parse_steps("expect:foo expect:bar")
+    assert steps is None and "send" in err
+    # step limit (9 steps)
+    steps, _, err = parse_steps(" ".join(["send:x"] * 9))
+    assert steps is None and "8" in err
+    # expect regex with a space
+    steps, _, err = parse_steps("expect:hello world send:x")
+    assert steps is None and err
+    # bad regex
+    steps, _, err = parse_steps("expect:(unclosed send:x")
+    assert steps is None and err
+
+
+def test_render_template_leaks():
+    leaks = {"leak": 0x5555555542c2, "leak1": 0x5555555542c2, "leak2": 0x1000}
+    out = render_template("A*72 + p64({leak}-0xb9)", leaks)
+    assert out == b"A" * 72 + struct.pack("<Q", 0x5555555542c2 - 0xb9)
+    out = render_template("p64({leak2}+16)", leaks)
+    assert out == struct.pack("<Q", 0x1010)
+    out = render_template("p64({leak2+16})", leaks)  # offset inside braces
+    assert out == struct.pack("<Q", 0x1010)
+    out = render_template("p64({leak})", leaks)
+    assert out == struct.pack("<Q", 0x5555555542c2)
+    # literal text terms (menu answers) pass through as bytes
+    assert render_template("1", {}) == b"1"
+    assert render_template("A*2 + yes", {}) == b"AAyes"
+    try:
+        render_template("p64({leak3})", leaks)
+        raise AssertionError("expected ValueError")
+    except ValueError as e:
+        assert "leak3" in str(e)
+
+
 def main():
     # cyclic round-trip: every 4-byte fragment locates itself
     pat = cyclic(256)
@@ -147,6 +204,10 @@ def main():
     test_unknown_skill_lists_available()
     test_toolbox_skill_dispatch()
     assert "discover_offset" in skill_docs() and "deliver_stdin" in skill_docs()
+    test_parse_steps_shorthand()
+    test_parse_steps_explicit_with_hex8()
+    test_parse_steps_errors()
+    test_render_template_leaks()
     print("test_skills OK")
 
 
