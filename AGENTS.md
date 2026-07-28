@@ -51,6 +51,17 @@ pruning: `.enigma/enigma.db.bak-*`.
 - Skill usage is measured: `skill_steps` / `solved_with_skill` in run_hw
   results and the ladder matrix (assisted vs unaided split).
 - Design: docs/superpowers/specs/2026-07-28-skill-tools-design.md
+- **First grounded solve same day**: gate run solved rung 1 (50 steps,
+  skill_steps=20, solved_with_skill=True; transcript
+  homework/out/rung1_20260728T152824.jsonl).
+- Dream config repointed: ENIGMA_LOCAL_MODELS=deepseek-coder-v2:16b
+  (gemma4:26b was deleted → 404s). Dream cycle verified completing.
+- Interactive skills added 2026-07-28 (rung 2 was structurally unsolvable:
+  one-shot delivery respawns the process, ASLR re-randomizes): `pwn_stdin`
+  (expect/send step engine over one process) and `pwn_tcp` (same engine over
+  an in-container TCP relay; `hex8` = ExploitGym's 8-byte-hex size prefix).
+  {leak}/{leakN}/{leak±0xN} template vars bind expect captures.
+  Design: docs/superpowers/specs/2026-07-28-interactive-skills-design.md
 
 ## What this is
 
