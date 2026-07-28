@@ -62,6 +62,14 @@ pruning: `.enigma/enigma.db.bak-*`.
   an in-container TCP relay; `hex8` = ExploitGym's 8-byte-hex size prefix).
   {leak}/{leakN}/{leak±0xN} template vars bind expect captures.
   Design: docs/superpowers/specs/2026-07-28-interactive-skills-design.md
+- **Rung-2 behavioral gate UNMET (2026-07-28)**: mechanism proven (live test
+  solves rung 2 through pwn_stdin) but the agent run timed out at 64 steps,
+  17 skill_steps, no solve. The model DID discover pwn_stdin (9 calls) and
+  the session mechanics worked; it failed on offset arithmetic
+  (`{leak}+0x1209` — win's file offset added to the runtime leak — instead of
+  `{leak}-0xb9`) and regressed to pwntools-in-container (not installed).
+  Next lever: pinned lesson with the exact rung-2 command shape
+  (win = leak − (off(main) − off(win))), not more mechanism.
 
 ## What this is
 
