@@ -1,0 +1,135 @@
+[
+  {
+    "area": "string processing",
+    "difficulty": "easy",
+    "description": "Implement `reverse_words(s: str) -> str` that returns the string with the order of its whitespace-separated words reversed. Collapse runs of whitespace to a single space and strip leading/trailing spaces. Example: reverse_words('  the quick  brown ') == 'brown quick the'.",
+    "tests": "assert reverse_words('the quick brown fox') == 'fox brown quick the'\nassert reverse_words('  hello   world ') == 'world hello'\nassert reverse_words('single') == 'single'\nassert reverse_words('   ') == ''"
+  },
+  {
+    "area": "string processing",
+    "difficulty": "easy",
+    "description": "Implement `is_palindrome(s: str) -> bool` that returns True if s reads the same forwards and backwards considering only alphanumeric characters and ignoring case. Example: is_palindrome('A man, a plan, a canal: Panama') == True.",
+    "tests": "assert is_palindrome('A man, a plan, a canal: Panama') is True\nassert is_palindrome('race a car') is False\nassert is_palindrome('') is True\nassert is_palindrome('Was it a car or a cat I saw?') is True"
+  },
+  {
+    "area": "hash maps and counting",
+    "difficulty": "easy",
+    "description": "Implement `two_sum(nums: list[int], target: int) -> list[int]` that returns the indices [i, j] with i < j such that nums[i] + nums[j] == target. Exactly one solution exists. Example: two_sum([2,7,11,15], 9) == [0,1].",
+    "tests": "assert two_sum([2,7,11,15], 9) == [0,1]\nassert two_sum([3,2,4], 6) == [1,2]\nassert two_sum([3,3], 6) == [0,1]"
+  },
+  {
+    "area": "recursion or dynamic programming",
+    "difficulty": "easy",
+    "description": "Implement `fib(n: int) -> int` returning the n-th Fibonacci number with fib(0)=0, fib(1)=1, fib(n)=fib(n-1)+fib(n-2). It must handle n up to 50 efficiently. Example: fib(10) == 55.",
+    "tests": "assert fib(0) == 0\nassert fib(1) == 1\nassert fib(10) == 55\nassert fib(20) == 6765\nassert fib(50) == 12586269025"
+  },
+  {
+    "area": "list / array manipulation",
+    "difficulty": "easy",
+    "description": "Implement `flatten(items: list) -> list` that fully flattens an arbitrarily nested list of integers into a single flat list, preserving order. Example: flatten([1,[2,[3,4],5]]) == [1,2,3,4,5].",
+    "tests": "assert flatten([1,[2,[3,4],5]]) == [1,2,3,4,5]\nassert flatten([]) == []\nassert flatten([[[]]]) == []\nassert flatten([1,2,3]) == [1,2,3]"
+  },
+  {
+    "area": "parsing structured text or simple expressions",
+    "difficulty": "easy",
+    "description": "Implement `roman_to_int(s: str) -> int` that converts a valid Roman numeral string (I,V,X,L,C,D,M with standard subtractive notation) to its integer value. Example: roman_to_int('MCMXciv'.upper()) == 1994.",
+    "tests": "assert roman_to_int('III') == 3\nassert roman_to_int('IV') == 4\nassert roman_to_int('IX') == 9\nassert roman_to_int('LVIII') == 58\nassert roman_to_int('MCMXCIV') == 1994"
+  },
+  {
+    "area": "arithmetic or number theory",
+    "difficulty": "easy",
+    "description": "Implement `gcd(a: int, b: int) -> int` returning the greatest common divisor of two non-negative integers (gcd(0,0)==0). Example: gcd(48, 36) == 12.",
+    "tests": "assert gcd(48, 36) == 12\nassert gcd(17, 5) == 1\nassert gcd(0, 9) == 9\nassert gcd(9, 0) == 9\nassert gcd(100, 80) == 20"
+  },
+  {
+    "area": "string processing",
+    "difficulty": "easy",
+    "description": "Implement `rle_encode(s: str) -> str` that run-length-encodes a string as character followed by its run count, e.g. rle_encode('aaabbc') == 'a3b2c1'. For an empty string return ''.",
+    "tests": "assert rle_encode('aaabbc') == 'a3b2c1'\nassert rle_encode('') == ''\nassert rle_encode('abc') == 'a1b1c1'\nassert rle_encode('xxxx') == 'x4'"
+  },
+  {
+    "area": "searching or sorting",
+    "difficulty": "easy",
+    "description": "Implement `binary_search(arr: list[int], target: int) -> int` returning the index of target in the ascending-sorted list arr, or -1 if absent. Example: binary_search([1,3,5,7,9], 7) == 3.",
+    "tests": "assert binary_search([1,3,5,7,9], 7) == 3\nassert binary_search([1,3,5,7,9], 1) == 0\nassert binary_search([1,3,5,7,9], 9) == 4\nassert binary_search([1,3,5,7,9], 4) == -1\nassert binary_search([], 1) == -1"
+  },
+  {
+    "area": "dates, times, or intervals",
+    "difficulty": "easy",
+    "description": "Implement `merge_intervals(intervals: list[list[int]]) -> list[list[int]]` that merges all overlapping intervals and returns them sorted by start. Example: merge_intervals([[1,3],[2,6],[8,10],[15,18]]) == [[1,6],[8,10],[15,18]].",
+    "tests": "assert merge_intervals([[1,3],[2,6],[8,10],[15,18]]) == [[1,6],[8,10],[15,18]]\nassert merge_intervals([[1,4],[4,5]]) == [[1,5]]\nassert merge_intervals([]) == []\nassert merge_intervals([[1,4],[0,4]]) == [[0,4]]"
+  },
+  {
+    "area": "hash maps and counting",
+    "difficulty": "easy",
+    "description": "Implement `most_common_char(s: str) -> str` returning the most frequently occurring character in s; if there is a tie, return the one that appears earliest in s. Assume s is non-empty. Example: most_common_char('aabbbc') == 'b'.",
+    "tests": "assert most_common_char('aabbbc') == 'b'\nassert most_common_char('abcabc') == 'a'\nassert most_common_char('z') == 'z'\nassert most_common_char('xxyy') == 'x'"
+  },
+  {
+    "area": "parsing structured text or simple expressions",
+    "difficulty": "easy",
+    "description": "Implement `is_balanced(s: str) -> bool` that returns True iff the brackets in s (only the characters ()[]{}) are correctly matched and nested. Example: is_balanced('([]{})') == True, is_balanced('(]') == False.",
+    "tests": "assert is_balanced('([]{})') is True\nassert is_balanced('(]') is False\nassert is_balanced('') is True\nassert is_balanced('(((') is False\nassert is_balanced('{[()()]}') is True"
+  },
+
+  {
+    "area": "recursion or dynamic programming",
+    "difficulty": "hard",
+    "description": "Implement `coin_change(coins: list[int], amount: int) -> int` returning the fewest number of coins (each denomination usable unlimited times) that sum exactly to amount, or -1 if it cannot be made. coin_change([], 0) == 0. Example: coin_change([1,2,5], 11) == 3.",
+    "tests": "assert coin_change([1,2,5], 11) == 3\nassert coin_change([2], 3) == -1\nassert coin_change([1], 0) == 0\nassert coin_change([1,2,5], 100) == 20\nassert coin_change([2,5,10,1], 27) == 4"
+  },
+  {
+    "area": "recursion or dynamic programming",
+    "difficulty": "hard",
+    "description": "Implement `word_break(s: str, words: list[str]) -> bool` returning True iff s can be segmented into a space-separated sequence of one or more words from the dictionary `words` (each usable any number of times). The empty string is breakable. Example: word_break('leetcode', ['leet','code']) == True.",
+    "tests": "assert word_break('leetcode', ['leet','code']) is True\nassert word_break('applepenapple', ['apple','pen']) is True\nassert word_break('catsandog', ['cats','dog','sand','and','cat']) is False\nassert word_break('', ['a']) is True"
+  },
+  {
+    "area": "recursion or dynamic programming",
+    "difficulty": "hard",
+    "description": "Implement `lis(nums: list[int]) -> int` returning the length of the longest strictly increasing subsequence of nums (elements need not be contiguous). lis([]) == 0. Example: lis([10,9,2,5,3,7,101,18]) == 4.",
+    "tests": "assert lis([10,9,2,5,3,7,101,18]) == 4\nassert lis([0,1,0,3,2,3]) == 4\nassert lis([7,7,7,7]) == 1\nassert lis([]) == 0\nassert lis([1,2,3,4,5]) == 5"
+  },
+  {
+    "area": "list / array manipulation",
+    "difficulty": "hard",
+    "description": "Implement `trap(height: list[int]) -> int` returning the total units of rain water trapped between the bars of an elevation map, where height[i] is the height of bar i (width 1). trap([]) == 0. Example: trap([0,1,0,2,1,0,1,3,2,1,2,1]) == 6.",
+    "tests": "assert trap([0,1,0,2,1,0,1,3,2,1,2,1]) == 6\nassert trap([4,2,0,3,2,5]) == 9\nassert trap([]) == 0\nassert trap([1,2,3]) == 0\nassert trap([3,0,3]) == 3"
+  },
+  {
+    "area": "recursion or dynamic programming",
+    "difficulty": "hard",
+    "description": "Implement `decode_ways(s: str) -> int` returning the number of ways to decode a digit string where '1'->'A', ..., '26'->'Z'. A '0' cannot start a valid code and only 10 and 20 are valid two-digit codes containing a zero. An empty string decodes 0 ways here. Example: decode_ways('226') == 3.",
+    "tests": "assert decode_ways('12') == 2\nassert decode_ways('226') == 3\nassert decode_ways('06') == 0\nassert decode_ways('0') == 0\nassert decode_ways('10') == 1\nassert decode_ways('2101') == 1"
+  },
+  {
+    "area": "parsing structured text or simple expressions",
+    "difficulty": "hard",
+    "description": "Implement `eval_expr(s: str) -> int` that evaluates an arithmetic expression string containing non-negative integers and the binary operators + - * with standard precedence (* before + and -), left-to-right, no parentheses and no spaces. Example: eval_expr('3+2*2') == 7.",
+    "tests": "assert eval_expr('3+2*2') == 7\nassert eval_expr('2*3+4') == 10\nassert eval_expr('1+2+3') == 6\nassert eval_expr('2*3*4') == 24\nassert eval_expr('10+2*3+5') == 21\nassert eval_expr('7') == 7"
+  },
+  {
+    "area": "basic graph or tree traversal",
+    "difficulty": "hard",
+    "description": "Implement `num_islands(grid: list[list[str]]) -> int` counting the number of islands in a grid of '1' (land) and '0' (water). An island is a maximal group of '1' cells connected 4-directionally (up/down/left/right). num_islands([]) == 0. Example: num_islands([['1','1','0'],['1','0','0'],['0','0','1']]) == 2.",
+    "tests": "assert num_islands([['1','1','0'],['1','0','0'],['0','0','1']]) == 2\nassert num_islands([]) == 0\nassert num_islands([['1','1'],['1','1']]) == 1\nassert num_islands([['0']]) == 0\nassert num_islands([['1','0','1','0','1']]) == 3"
+  },
+  {
+    "area": "basic graph or tree traversal",
+    "difficulty": "hard",
+    "description": "Implement `can_finish(num_courses: int, prerequisites: list[list[int]]) -> bool` where each pair [a, b] means course b must be taken before course a. Return True iff all num_courses courses (labelled 0..num_courses-1) can be completed, i.e. the prerequisite graph has no cycle. Example: can_finish(2, [[1,0],[0,1]]) == False.",
+    "tests": "assert can_finish(2, [[1,0]]) is True\nassert can_finish(2, [[1,0],[0,1]]) is False\nassert can_finish(3, [[1,0],[2,1]]) is True\nassert can_finish(1, []) is True\nassert can_finish(3, [[0,1],[1,2],[2,0]]) is False"
+  },
+  {
+    "area": "dates, times, or intervals",
+    "difficulty": "hard",
+    "description": "Implement `min_meeting_rooms(intervals: list[list[int]]) -> int` returning the minimum number of rooms required so that no two overlapping meetings share a room. A meeting [s, e] occupies [s, e); a meeting ending exactly when another starts does not overlap. min_meeting_rooms([]) == 0. Example: min_meeting_rooms([[0,30],[5,10],[15,20]]) == 2.",
+    "tests": "assert min_meeting_rooms([[0,30],[5,10],[15,20]]) == 2\nassert min_meeting_rooms([[7,10],[2,4]]) == 1\nassert min_meeting_rooms([]) == 0\nassert min_meeting_rooms([[1,5],[5,10]]) == 1\nassert min_meeting_rooms([[1,5],[2,6],[3,7]]) == 3"
+  },
+  {
+    "area": "greedy or simulation logic",
+    "difficulty": "hard",
+    "description": "Implement `spiral_order(matrix: list[list[int]]) -> list[int]` returning all elements of the matrix in clockwise spiral order starting from the top-left. spiral_order([]) == []. Example: spiral_order([[1,2,3],[4,5,6],[7,8,9]]) == [1,2,3,6,9,8,7,4,5].",
+    "tests": "assert spiral_order([[1,2,3],[4,5,6],[7,8,9]]) == [1,2,3,6,9,8,7,4,5]\nassert spiral_order([[1,2,3,4],[5,6,7,8],[9,10,11,12]]) == [1,2,3,4,8,12,11,10,9,5,6,7]\nassert spiral_order([]) == []\nassert spiral_order([[1]]) == [1]\nassert spiral_order([[1,2],[3,4]]) == [1,2,4,3]"
+  }
+]

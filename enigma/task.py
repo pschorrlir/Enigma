@@ -101,3 +101,4 @@ class TaskResult:
     # Carried for post-task learning (playbook credit, contrastive distillation).
     worst: Candidate | None = None
     recalled_insights: list[int] = field(default_factory=list)
+    recalled_reflections: list[int] = field(default_factory=list)

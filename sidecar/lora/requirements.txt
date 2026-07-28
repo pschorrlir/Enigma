@@ -1,0 +1,21 @@
+# LoRA fine-tuning sidecar. Install into its own venv (see README.md), on the
+# HOST with a GPU — not in the main httpx-only Enigma environment, not in CI.
+#
+# Install a CUDA-matched torch first, e.g.:
+#   pip install torch --index-url https://download.pytorch.org/whl/cu124
+# then:  pip install -r requirements.txt
+
+torch>=2.4
+transformers>=4.45,<5
+peft>=0.13
+trl>=0.12,<0.20
+datasets>=3.0
+accelerate>=1.0
+safetensors>=0.4
+
+# Optional: QLoRA (--load-4bit) to fit an 8B base on a 24GB GPU.
+bitsandbytes>=0.44 ; platform_system == "Linux"
+
+# Optional alternative training backend (not required by train_lora.py, which
+# uses the transformers+peft+trl path). Uncomment to experiment:
+# unsloth>=2024.11

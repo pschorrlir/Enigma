@@ -7,10 +7,12 @@ import asyncio
 import logging
 import os
 import signal
+import time
 
 import httpx
 
 from .config import Config
+from .dream import Dreamer
 from .engine import Engine, result_to_json
 from .memory import Store
 from .task import TaskSpec
@@ -89,8 +91,30 @@ async def _run(cfg: Config) -> None:
         wake = asyncio.Event()
         inflight: set[asyncio.Task] = set()
         learners: set[asyncio.Task] = set()
-        log.info("daemon up: models=%s cloud=%s concurrency=%d",
-                 cfg.local_models, cfg.cloud_model if engine.cloud.enabled else "disabled", cfg.concurrency)
+        dreamer = Dreamer(cfg, store, engine) if cfg.dream_enabled else None
+        dream_task: asyncio.Task | None = None
+        idle_since: float | None = None
+        log.info("daemon up: models=%s cloud=%s concurrency=%d dreaming=%s",
+                 cfg.local_models, cfg.cloud_model if engine.cloud.enabled else "disabled",
+                 cfg.concurrency, "on" if dreamer else "off")
+        store.set_meta("dream_state", "idle")
+        store.set_meta("daemon_started_at", str(time.time()))
+
+        async def run_dream() -> None:
+            store.set_meta("dream_state", "dreaming")
+            try:
+                report = await dreamer.dream(should_stop=stop)
+                store.set_meta("last_dream", report.summary().replace("\n", " | "))
+                store.set_meta("last_dream_at", str(time.time()))
+                if report.reflections_added or report.plays_attempted or report.cases_merged or report.insights_pruned:
+                    log.info("dream: %s", report.summary().replace("\n", " |"))
+            except asyncio.CancelledError:
+                log.info("dream interrupted")
+                raise
+            except Exception:
+                log.exception("dream cycle failed")
+            finally:
+                store.set_meta("dream_state", "idle")
 
         async def worker(task_id: str, spec_json: str) -> None:
             # The claim loop acquired our slot; release it when done.
@@ -135,11 +159,28 @@ async def _run(cfg: Config) -> None:
             row = store.claim_next()
             if row is None:
                 sem.release()
+                # Idle: after a quiet spell, dream (consolidate + self-play).
+                if dreamer is not None and not inflight and (dream_task is None or dream_task.done()):
+                    now = loop.time()
+                    if idle_since is None:
+                        idle_since = now
+                    elif now - idle_since >= cfg.dream_idle_s:
+                        dream_task = asyncio.create_task(run_dream())
+                        idle_since = None
                 await wait_signal(cfg.poll_interval_s)
                 continue
+            # Real work preempts any dream in progress.
+            idle_since = None
+            if dream_task is not None and not dream_task.done():
+                log.info("waking from dream: task %s arrived", row["id"])
+                dream_task.cancel()
             t = asyncio.create_task(worker(row["id"], row["spec"]))
             inflight.add(t)
             t.add_done_callback(inflight.discard)
+
+        if dream_task is not None and not dream_task.done():
+            dream_task.cancel()
+            await asyncio.gather(dream_task, return_exceptions=True)
 
         if inflight or learners:
             log.info("draining %d task(s) and %d learner(s)... (second signal cancels)", len(inflight), len(learners))

@@ -23,7 +23,7 @@ import sys
 from dataclasses import dataclass
 from typing import Any
 
-from .llm import AnthropicClient, LLMError, OllamaClient, extract_code, extract_json
+from .llm import AnthropicClient, LLMError, OllamaClient, extract_code, extract_json, is_nonanswer
 from .task import TaskSpec
 
 _REGEX_HAYSTACK_LIMIT = 200_000
@@ -56,6 +56,11 @@ class Evaluator:
         self._rubric_failed = False
 
     async def evaluate(self, task: TaskSpec, output: str) -> EvalResult:
+        # Universal gate: empty / placeholder output ('<answer>', 'TODO', …) is a
+        # hard fail for every evaluator — no judge should ever score it, let
+        # alone hallucinate a review of an answer that isn't there.
+        if is_nonanswer(output):
+            return EvalResult(0.0, f"output is empty or a placeholder ({output.strip()[:40]!r}), not a real answer")
         match self.kind:
             case "python_tests":
                 return await self._python_tests(output)
@@ -184,6 +189,10 @@ class Evaluator:
     # ---- llm_judge: rubric-decomposed (Rubrics-as-Rewards) ----------------
 
     async def _llm_judge(self, task: TaskSpec, output: str) -> EvalResult:
+        # A code task whose "answer" is a prose description of code (no actual
+        # code) is a hard fail — no judge should pass it. Deterministic gate.
+        if task.output_kind == "code" and not _looks_like_code(output):
+            return EvalResult(0.1, "output is a prose description, not actual runnable code — write the code itself")
         rubric = await self._get_rubric(task)
         if rubric:
             return await self._judge_by_rubric(task, output, rubric)
@@ -218,10 +227,19 @@ class Evaluator:
             {"check": str(i["check"])[:300], "weight": max(1.0, min(3.0, float(i.get("weight", 1))))}
             for i in items
             if isinstance(i, dict) and i.get("check")
-        ][:7]
+        ][:6]
         if len(rubric) < 2:
             self._rubric_failed = True
             return None
+        # Always gate on topical grounding (heavily weighted): the single most
+        # common failure is a fluent but off-topic / different-domain answer.
+        rubric.insert(0, {
+            "check": "Does the output actually DO this task's specific subject and constraints — "
+                     "providing the real solution/artifact, not merely describing, naming, or "
+                     "claiming what a solution would do, and not a different-domain answer? "
+                     "Superficial keyword matches do NOT count.",
+            "weight": 3.0,
+        })
         self._rubric = rubric
         return rubric
 
@@ -231,7 +249,10 @@ class Evaluator:
             f"Task:\n{task.description[:2000]}\n\n"
             + (f"Task input:\n{task.input_as_text()[:2000]}\n\n" if task.input is not None else "")
             + f"Candidate output:\n{output[:6000]}\n\n"
-            f"Answer each check strictly for this candidate:\n{checklist}\n\n"
+            f"Grade each check STRICTLY for this candidate:\n{checklist}\n\n"
+            "Mark a check true ONLY if the output clearly and fully satisfies it; when in doubt, "
+            "mark it false. An answer that is off-topic, generic, ignores the task's specifics, or "
+            "is incomplete/truncated must fail most checks.\n"
             'Respond with ONLY JSON: {"checks": [true/false per item, in order], '
             '"feedback": "<one short paragraph naming the failed checks, or \'good\'>"}'
         )
@@ -247,21 +268,24 @@ class Evaluator:
     async def _judge_holistic(self, task: TaskSpec, output: str) -> EvalResult:
         criteria = self.spec.get("criteria", "correctness, completeness, and clarity")
         prompt = (
-            f"You are a strict evaluator. Task:\n{task.description}\n\n"
+            f"You are a strict, skeptical evaluator. Task:\n{task.description}\n\n"
             + (f"Task input:\n{task.input_as_text()}\n\n" if task.input is not None else "")
             + f"Candidate output:\n{output[:6000]}\n\n"
             f"Judge it on: {criteria}.\n"
+            "Grade strictly. Penalize heavily any answer that is off-topic, from the wrong domain, "
+            "generic, ignores the task's stated constraints, or is incomplete/truncated. An answer "
+            "that merely DESCRIBES or claims what a solution would do — instead of actually providing "
+            "the solution/code/artifact — must score below 0.3. Superficial keyword matches to the "
+            "task do not count. Reserve scores above 0.9 for answers that fully and specifically "
+            "satisfy THIS task.\n"
             'Respond with ONLY JSON: {"score": <0.0-1.0>, "feedback": "<one short paragraph of specific problems, or \'good\'>"}'
         )
         raw = (await self._ollama.generate(self._judge_model, prompt, temperature=0.0, format_json=True)).text
-        obj = extract_json(raw)
-        if not obj or "score" not in obj:
+        verdict = _parse_verdict(raw)
+        if verdict is None:
             return EvalResult(0.5, "judge produced unparseable verdict")
-        try:
-            score = min(1.0, max(0.0, float(obj["score"])))
-        except (TypeError, ValueError):
-            return EvalResult(0.5, "judge produced non-numeric score")
-        return EvalResult(score, str(obj.get("feedback", "")))
+        score, feedback = verdict
+        return EvalResult(min(1.0, max(0.0, score)), feedback or "good")
 
 
     # ---- prm: step-level process reward via sidecar -------------------------
@@ -302,6 +326,43 @@ class Evaluator:
         if scores[weakest] < 0.8:
             fb += f" | weakest step #{weakest + 1}: \"{steps[weakest][:200]}\""
         return EvalResult(min(1.0, max(0.0, score)), fb)
+
+
+def _looks_like_code(text: str) -> bool:
+    """True if the text actually contains code, not just a prose description of
+    it. Prose like 'The provided Python code defines a function…' has none of
+    these structural signals; real code has several."""
+    if "```" in text:
+        return True
+    patterns = (
+        r"\bdef\s+\w+\s*\(", r"\bclass\s+\w+\s*[:\(]",
+        r"^\s*(?:import|from)\s+\w", r"^\s{2,}\S",
+        r"\)\s*:", r"\bfor\s+\w+\s+in\b", r"^\s*if\s+.*:\s*$",
+        r"\w+\s*=\s*[\[\{\(]", r"=>", r";\s*$",
+    )
+    hits = sum(1 for p in patterns if re.search(p, text, re.MULTILINE))
+    return hits >= 2
+
+
+def _parse_verdict(raw: str) -> tuple[float, str] | None:
+    """Parse a judge's {score, feedback} robustly. Model JSON is frequently
+    broken by literal newlines or unescaped LaTeX backslashes (\\sum, \\ge) in
+    the feedback string; rather than discard the whole verdict, salvage the
+    numeric score by regex so a good answer isn't thrown away as 'unparseable'."""
+    obj = extract_json(raw)
+    if obj and "score" in obj:
+        try:
+            return float(obj["score"]), str(obj.get("feedback", ""))[:1500]
+        except (TypeError, ValueError):
+            pass
+    m = re.search(r"score\W{0,6}?(\d(?:\.\d+)?)", raw, re.IGNORECASE)
+    if m is None:
+        return None
+    fb = re.search(r"feedback[\"'\s:]{0,8}(.{0,400})", raw, re.IGNORECASE | re.DOTALL)
+    feedback = ""
+    if fb:
+        feedback = fb.group(1).strip().strip("\"'").split("\n")[0][:1500]
+    return float(m.group(1)), feedback
 
 
 def _split_steps(output: str) -> list[str]:

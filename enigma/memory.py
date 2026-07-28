@@ -30,6 +30,7 @@ CREATE TABLE IF NOT EXISTS tasks (
     spec TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'queued',  -- queued|running|succeeded|exhausted|failed
     result TEXT,
+    source TEXT NOT NULL DEFAULT 'user',    -- user|dream
     created_at REAL NOT NULL,
     started_at REAL,
     finished_at REAL
@@ -83,17 +84,71 @@ CREATE TABLE IF NOT EXISTS cases (
     score REAL,
     created_at REAL NOT NULL
 );
+
+-- Small key/value store for daemon-published state (e.g. live dream status)
+-- the dashboard reads across connections.
+CREATE TABLE IF NOT EXISTS meta (
+    key TEXT PRIMARY KEY,
+    value TEXT
+);
+
+-- Operator-ingested documents (notes, papers, code): chunked + embedded, they
+-- join the concept pool so ideation recombines the USER's material, not just
+-- the engine's own coding-lesson playbook.
+CREATE TABLE IF NOT EXISTS docs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    source TEXT,
+    text TEXT NOT NULL,
+    embedding TEXT,
+    created_at REAL NOT NULL
+);
+
+-- Semantic memory: cross-task principles distilled during dreaming by
+-- clustering episodic insights. `support` = how many insights it abstracts.
+CREATE TABLE IF NOT EXISTS reflections (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    topic TEXT,
+    lesson TEXT NOT NULL,
+    embedding TEXT,
+    support INTEGER DEFAULT 1,
+    uses INTEGER DEFAULT 0,
+    created_at REAL NOT NULL
+);
+
+-- Discoveries: novel ideas generated during dreaming by combining distant
+-- memory concepts. `novelty` = embedding distance from prior knowledge,
+-- `value` = skeptical usefulness score, `score` = their harmonic mean,
+-- `parents` = JSON of the source concept snippets that sparked it.
+CREATE TABLE IF NOT EXISTS ideas (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    statement TEXT NOT NULL,
+    elaboration TEXT,
+    embedding TEXT,
+    novelty REAL,
+    value REAL,
+    score REAL,
+    parents TEXT,
+    uses INTEGER DEFAULT 0,
+    created_at REAL NOT NULL
+);
 """
 
 _MIGRATIONS = (
     "ALTER TABLE insights ADD COLUMN helpful INTEGER DEFAULT 0",
     "ALTER TABLE insights ADD COLUMN harmful INTEGER DEFAULT 0",
+    "ALTER TABLE tasks ADD COLUMN source TEXT NOT NULL DEFAULT 'user'",
+    # Reflections earn outcome credit like insights (were popularity-only).
+    "ALTER TABLE reflections ADD COLUMN helpful INTEGER DEFAULT 0",
+    "ALTER TABLE reflections ADD COLUMN harmful INTEGER DEFAULT 0",
+    # Human feedback on discovered ideas: 0 neutral, 1 liked, -1 dismissed.
+    "ALTER TABLE ideas ADD COLUMN rating INTEGER DEFAULT 0",
 )
 
 
 class Store:
     def __init__(self, path: Path):
         path.parent.mkdir(parents=True, exist_ok=True)
+        self._path = path
         self._db = sqlite3.connect(path, timeout=5.0)
         self._db.row_factory = sqlite3.Row
         self._db.execute("PRAGMA journal_mode=WAL")
@@ -106,22 +161,22 @@ class Store:
             except sqlite3.OperationalError:
                 pass  # column already exists
         self._db.commit()
-        # (id, lesson, decoded embedding or None) — insights are append-mostly,
+        # (id, lesson, decoded embedding or None, kind) — insights are append-mostly,
         # so cache them to avoid re-decoding 500 embeddings per recall.
-        self._insight_cache: list[tuple[int, str, list[float] | None]] | None = None
+        self._insight_cache: list[tuple[int, str, list[float] | None, str]] | None = None
 
     def close(self) -> None:
         self._db.close()
 
     # ---- task queue -----------------------------------------------------
 
-    def enqueue(self, task_id: str, spec_json: str) -> str:
+    def enqueue(self, task_id: str, spec_json: str, source: str = "user") -> str:
         """Insert the task; on id collision mint a fresh id. Returns the id used."""
         for attempt in range(2):
             try:
                 self._db.execute(
-                    "INSERT INTO tasks (id, spec, created_at) VALUES (?, ?, ?)",
-                    (task_id, spec_json, time.time()),
+                    "INSERT INTO tasks (id, spec, source, created_at) VALUES (?, ?, ?, ?)",
+                    (task_id, spec_json, source, time.time()),
                 )
                 self._db.commit()
                 return task_id
@@ -133,6 +188,16 @@ class Store:
                 spec["id"] = task_id
                 spec_json = json.dumps(spec)
         return task_id
+
+    def insert_dream_task(self, task_id: str, spec_json: str) -> None:
+        """Record a self-play task as already 'running' so the daemon's claim
+        loop never picks it up — the dreamer owns and finishes it directly."""
+        self._db.execute(
+            "INSERT OR REPLACE INTO tasks (id, spec, status, source, created_at, started_at) "
+            "VALUES (?, ?, 'running', 'dream', ?, ?)",
+            (task_id, spec_json, time.time(), time.time()),
+        )
+        self._db.commit()
 
     def claim_next(self) -> sqlite3.Row | None:
         """Atomically claim the oldest queued task."""
@@ -157,9 +222,17 @@ class Store:
         """Recover tasks left 'running' by a killed daemon.
 
         Only call while holding the daemon pidfile — a second daemon calling
-        this would steal a live daemon's in-flight tasks.
+        this would steal a live daemon's in-flight tasks. Dream (self-play)
+        tasks are never requeued onto the user queue: an interrupted dream is
+        marked 'failed', since re-running it would inject synthetic work.
         """
-        cur = self._db.execute("UPDATE tasks SET status='queued', started_at=NULL WHERE status='running'")
+        self._db.execute(
+            "UPDATE tasks SET status='failed', finished_at=? WHERE status='running' AND source='dream'",
+            (time.time(),),
+        )
+        cur = self._db.execute(
+            "UPDATE tasks SET status='queued', started_at=NULL WHERE status='running' AND source='user'"
+        )
         self._db.commit()
         return cur.rowcount
 
@@ -196,6 +269,19 @@ class Store:
             (kind, limit),
         ).fetchall()
 
+    def episode_climb(self) -> list[sqlite3.Row]:
+        """Per evaluator kind and iteration index, mean score and sample count over
+        locally-run episodes of finished tasks — the iteration-climb aggregation for
+        the dashboard. Read-only; the server ships this straight to /api/episodes so
+        the client never aggregates."""
+        return self._db.execute(
+            "SELECT json_extract(t.spec, '$.evaluator.kind') AS kind, e.iteration AS iteration, "
+            "AVG(e.score) AS mean_score, COUNT(*) AS n "
+            "FROM episodes e JOIN tasks t ON t.id = e.task_id "
+            "WHERE e.origin='local' AND t.status IN ('succeeded','exhausted') AND e.score IS NOT NULL "
+            "GROUP BY kind, e.iteration ORDER BY kind, e.iteration"
+        ).fetchall()
+
     def prune_episodes(self, older_than_days: int) -> int:
         cutoff = time.time() - older_than_days * 86400
         cur = self._db.execute("DELETE FROM episodes WHERE created_at < ?", (cutoff,))
@@ -204,13 +290,15 @@ class Store:
 
     # ---- insights (playbook memory) -----------------------------------------
 
-    def _load_insight_cache(self) -> list[tuple[int, str, list[float] | None]]:
+    def _load_insight_cache(self) -> list[tuple[int, str, list[float] | None, str]]:
         if self._insight_cache is None:
             rows = self._db.execute(
-                "SELECT id, lesson, embedding FROM insights ORDER BY id DESC LIMIT 500"
+                "SELECT id, lesson, embedding, kind FROM insights ORDER BY id DESC LIMIT 4000"
             ).fetchall()
             self._insight_cache = [
-                (r["id"], r["lesson"] or "", json.loads(r["embedding"]) if r["embedding"] else None)
+                (r["id"], r["lesson"] or "",
+                 json.loads(r["embedding"]) if r["embedding"] else None,
+                 r["kind"] or "")
                 for r in rows
             ]
         return self._insight_cache
@@ -223,10 +311,10 @@ class Store:
         self._db.commit()
         if self._insight_cache is not None:
             row = self._db.execute("SELECT last_insert_rowid() AS i").fetchone()
-            self._insight_cache.insert(0, (row["i"], lesson[:2000], embedding))
+            self._insight_cache.insert(0, (row["i"], lesson[:2000], embedding, kind))
 
     def is_duplicate_insight(self, lesson: str, embedding: list[float] | None) -> bool:
-        for _id, existing, emb in self._load_insight_cache():
+        for _id, existing, emb, _kind in self._load_insight_cache():
             if embedding is not None and emb is not None:
                 if _cosine(embedding, emb) > 0.95:
                     return True
@@ -234,17 +322,37 @@ class Store:
                 return True
         return False
 
-    def recall(self, query: str, query_emb: list[float] | None, top_k: int) -> list[tuple[int, str]]:
+    def recent_lessons(self, kind: str, k: int) -> list[str]:
+        """The NEWEST lessons of a kind, newest first — recall() ranks by
+        similarity, but a campaign's latest strategic lessons lose lexical/cosine
+        races to tactical lessons stuffed with objective keywords (v9/v10 both
+        repeated failures their own run's lesson addressed)."""
+        return [lesson for _, lesson in self.recent_lesson_rows(kind, k)]
+
+    def recent_lesson_rows(self, kind: str, k: int) -> list[tuple[int, str]]:
+        """Same as recent_lessons but with ids, so callers can credit/blame the
+        exact lessons they injected (closes the ACE loop for agent runs)."""
+        rows = self._db.execute(
+            "SELECT id, lesson FROM insights WHERE kind=? ORDER BY id DESC LIMIT ?",
+            (kind, k)).fetchall()
+        return [(r["id"], r["lesson"] or "") for r in rows]
+
+    def recall(self, query: str, query_emb: list[float] | None, top_k: int,
+               kind: str | None = None) -> list[tuple[int, str]]:
         """Top insights as (id, lesson). Embedded and non-embedded rows are ranked
         separately (cosine vs token-overlap scales aren't comparable) and merged
-        by rank so neither population starves the other."""
+        by rank so neither population starves the other. `kind` scopes the race:
+        agent lessons should not compete with coding-task lessons for prompt
+        slots (264 python_tests vs 50 agent rows at last count)."""
         cache = self._load_insight_cache()
+        if kind is not None:
+            cache = [row for row in cache if row[3] == kind]
         if not cache:
             return []
         q_tokens = _tokens(query)
         embedded: list[tuple[float, int, str]] = []
         plain: list[tuple[float, int, str]] = []
-        for iid, lesson, emb in cache:
+        for iid, lesson, emb, _kind in cache:
             if query_emb is not None and emb is not None:
                 embedded.append((_cosine(query_emb, emb), iid, lesson))
             else:
@@ -293,6 +401,10 @@ class Store:
             (limit,),
         ).fetchall()
 
+    def all_insights(self) -> list[tuple[int, str, list[float] | None, str]]:
+        """(id, lesson, embedding, kind) for every cached insight — dream clustering."""
+        return list(self._load_insight_cache())
+
     # ---- case bank (Memento) ------------------------------------------------
 
     def add_case(self, task_id: str, kind: str, description: str, embedding: list[float] | None,
@@ -307,23 +419,390 @@ class Store:
 
     def recall_case(self, kind: str, query: str, query_emb: list[float] | None) -> sqlite3.Row | None:
         """Best matching solved exemplar of the same evaluator kind, or None."""
+        cases = self.recall_cases(kind, query, query_emb, 1)
+        return cases[0] if cases else None
+
+    def recall_cases(self, kind: str, query: str, query_emb: list[float] | None, k: int,
+                     floor: float = 0.82) -> list[sqlite3.Row]:
+        """Top-k solved exemplars of the same evaluator kind, best first. `floor`
+        is the min cosine similarity to inject — high, so only near-identical
+        (recurring) tasks pull an exemplar; loosely-similar ones bleed and hurt."""
+        if k <= 0:
+            return []
         rows = self._db.execute(
-            "SELECT description, embedding, output, score FROM cases WHERE kind=? ORDER BY id DESC LIMIT 200",
+            "SELECT description, embedding, output, score FROM cases WHERE kind=? ORDER BY id DESC LIMIT 2000",
             (kind,),
         ).fetchall()
-        best, best_sim = None, 0.0
         q_tokens = _tokens(query)
+        scored: list[tuple[float, sqlite3.Row]] = []
         for r in rows:
             emb = json.loads(r["embedding"]) if r["embedding"] else None
             if query_emb is not None and emb is not None:
-                sim = _cosine(query_emb, emb)
-                floor = 0.55
+                sim, lo = _cosine(query_emb, emb), floor
             else:
-                sim = _jaccard(q_tokens, _tokens(r["description"]))
-                floor = 0.25
-            if sim > max(best_sim, floor):
-                best, best_sim = r, sim
-        return best
+                sim, lo = _jaccard(q_tokens, _tokens(r["description"])), max(0.35, floor - 0.3)
+            if sim > lo:
+                scored.append((sim, r))
+        scored.sort(key=lambda t: t[0], reverse=True)
+        return [r for _, r in scored[:k]]
+
+    def all_cases(self) -> list[sqlite3.Row]:
+        """Every case with its embedding — for dream-time dedup/merge."""
+        return self._db.execute(
+            "SELECT id, kind, description, embedding, score FROM cases ORDER BY id"
+        ).fetchall()
+
+    def dashboard_cases(self, limit: int = 400) -> list[sqlite3.Row]:
+        """Lean case rows (no embeddings) newest-first for the dashboard's memory-health
+        view. Read-only; skips the heavy embedding column all_cases() carries."""
+        return self._db.execute(
+            "SELECT id, kind, description, score, created_at FROM cases ORDER BY id DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+
+    def delete_cases(self, ids: list[int]) -> int:
+        if not ids:
+            return 0
+        cur = self._db.execute(
+            f"DELETE FROM cases WHERE id IN ({','.join('?' * len(ids))})", ids
+        )
+        self._db.commit()
+        return cur.rowcount
+
+    def sample_dream_seeds(self, kinds: tuple[str, ...], limit: int) -> list[sqlite3.Row]:
+        """Recent high-scoring solved cases of open-ended kinds, to seed self-play."""
+        if not kinds or limit <= 0:
+            return []
+        placeholders = ",".join("?" * len(kinds))
+        return self._db.execute(
+            f"SELECT description, kind, output, score FROM cases "
+            f"WHERE kind IN ({placeholders}) ORDER BY id DESC LIMIT ?",
+            (*kinds, limit),
+        ).fetchall()
+
+    # ---- reflections (consolidated semantic memory, written by dreaming) ------
+
+    def add_reflection(self, topic: str, lesson: str, embedding: list[float] | None, support: int) -> None:
+        self._db.execute(
+            "INSERT INTO reflections (topic, lesson, embedding, support, created_at) VALUES (?,?,?,?,?)",
+            (topic[:200], lesson[:2000], json.dumps(embedding) if embedding else None, support, time.time()),
+        )
+        self._db.commit()
+
+    def all_reflections(self, limit: int = 2000) -> list[tuple[int, str, list[float] | None]]:
+        rows = self._db.execute(
+            "SELECT id, lesson, embedding FROM reflections ORDER BY id DESC LIMIT ?", (limit,)
+        ).fetchall()
+        return [(r["id"], r["lesson"] or "", json.loads(r["embedding"]) if r["embedding"] else None) for r in rows]
+
+    def recall_reflections(self, query: str, query_emb: list[float] | None, k: int) -> list[tuple[int, str]]:
+        """Top consolidated principles for this query as (id, lesson), best first.
+        Ids let the caller credit/blame which principles actually helped."""
+        if k <= 0:
+            return []
+        rows = self.all_reflections()
+        q_tokens = _tokens(query)
+        scored: list[tuple[float, int, str]] = []
+        for rid, lesson, emb in rows:
+            if query_emb is not None and emb is not None:
+                sim, floor = _cosine(query_emb, emb), 0.25
+            else:
+                sim, floor = _jaccard(q_tokens, _tokens(lesson)), 0.05
+            if sim > floor:
+                scored.append((sim, rid, lesson))
+        scored.sort(reverse=True)
+        top = scored[:k]
+        if top:
+            ids = [rid for _, rid, _ in top]
+            self._db.execute(
+                f"UPDATE reflections SET uses = uses + 1 WHERE id IN ({','.join('?' * len(ids))})", ids
+            )
+            self._db.commit()
+        return [(rid, lesson) for _, rid, lesson in top]
+
+    def mark_reflections(self, ids: list[int], helpful: bool) -> None:
+        if not ids:
+            return
+        col = "helpful" if helpful else "harmful"
+        self._db.execute(
+            f"UPDATE reflections SET {col} = {col} + 1 WHERE id IN ({','.join('?' * len(ids))})", ids
+        )
+        self._db.commit()
+
+    def prune_reflections(self) -> int:
+        """Drop principles that keep hurting when recalled (net-negative), the
+        same ACE curation insights get — so platitudes can't become immortal."""
+        cur = self._db.execute("DELETE FROM reflections WHERE uses >= 4 AND harmful - helpful >= 3")
+        self._db.commit()
+        return cur.rowcount
+
+    def list_reflections(self, limit: int = 30) -> list[sqlite3.Row]:
+        return self._db.execute(
+            "SELECT topic, lesson, support, uses, helpful, harmful, created_at "
+            "FROM reflections ORDER BY id DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+
+    # ---- eviction (keep memory tiers bounded; called during dreaming) --------
+
+    def cap_reflections(self, cap: int) -> int:
+        """Keep the strongest `cap` reflections (by support+uses, then newest).
+        cap <= 0 means unlimited (the disk budget governs instead)."""
+        if cap <= 0:
+            return 0
+        cur = self._db.execute(
+            "DELETE FROM reflections WHERE id NOT IN "
+            "(SELECT id FROM reflections ORDER BY (support + uses) DESC, id DESC LIMIT ?)",
+            (cap,),
+        )
+        self._db.commit()
+        return cur.rowcount
+
+    def cap_insights(self, cap: int) -> int:
+        """Keep the most-useful `cap` insights (by net-helpful+uses, then newest).
+        cap <= 0 means unlimited (the disk budget governs instead)."""
+        if cap <= 0:
+            return 0
+        cur = self._db.execute(
+            "DELETE FROM insights WHERE id NOT IN "
+            "(SELECT id FROM insights ORDER BY (helpful - harmful + uses) DESC, id DESC LIMIT ?)",
+            (cap,),
+        )
+        self._db.commit()
+        if cur.rowcount:
+            self._insight_cache = None
+        return cur.rowcount
+
+    def cap_cases(self, cap: int) -> int:
+        """Keep the best `cap` solved exemplars (by score, then newest).
+        cap <= 0 means unlimited (the disk budget governs instead)."""
+        if cap <= 0:
+            return 0
+        cur = self._db.execute(
+            "DELETE FROM cases WHERE id NOT IN "
+            "(SELECT id FROM cases ORDER BY score DESC, id DESC LIMIT ?)",
+            (cap,),
+        )
+        self._db.commit()
+        return cur.rowcount
+
+    def disk_usage(self) -> dict[str, int]:
+        """Live data size (pages in use) and the actual file footprint on disk."""
+        pc = self._db.execute("PRAGMA page_count").fetchone()[0]
+        fc = self._db.execute("PRAGMA freelist_count").fetchone()[0]
+        ps = self._db.execute("PRAGMA page_size").fetchone()[0]
+        used = max(0, (pc - fc) * ps)
+        file_bytes = 0
+        for suffix in ("", "-wal", "-shm"):
+            try:
+                file_bytes += Path(str(self._path) + suffix).stat().st_size
+            except OSError:
+                pass
+        return {"used_bytes": used, "file_bytes": file_bytes}
+
+    def enforce_memory_budget(self, max_bytes: int, grace_seconds: float = 0.0) -> dict[str, int]:
+        """The primary memory governor: let every tier grow freely until the
+        live data reaches `max_bytes`, then evict weakest/oldest first —
+        disposable logs before distilled learning, reflections/ideas last — down
+        to 90% of budget, and reclaim the freed pages to the OS.
+
+        Distilled-learning tiers get a cold-start grace: rows younger than
+        `grace_seconds` are exempt, so a brand-new (uses=0) insight isn't culled
+        as 'junk' before it's ever had a chance to be recalled. Liked ideas are
+        never evicted. Uses (page_count - freelist_count) * page_size as the
+        live-size signal, so deletes register immediately without a per-batch VACUUM."""
+        if max_bytes <= 0 or self.disk_usage()["used_bytes"] <= max_bytes:
+            return {}
+        target = int(max_bytes * 0.9)
+        cutoff = time.time() - grace_seconds  # rows younger than this are protected
+        # Eviction ladder, least-valuable first. Each rung deletes its oldest /
+        # weakest rows; we only descend to the next rung if still over target.
+        ladder = (
+            ("episodes", "DELETE FROM episodes WHERE id IN "
+                         "(SELECT id FROM episodes ORDER BY created_at ASC, id ASC LIMIT ?)"),
+            ("dream_tasks", "DELETE FROM tasks WHERE source='dream' AND status != 'running' AND id IN "
+                            "(SELECT id FROM tasks WHERE source='dream' AND status != 'running' "
+                            "ORDER BY created_at ASC LIMIT ?)"),
+            ("old_tasks", "DELETE FROM tasks WHERE status != 'running' AND id IN "
+                          "(SELECT id FROM tasks WHERE status != 'running' ORDER BY created_at ASC LIMIT ?)"),
+            ("cases", f"DELETE FROM cases WHERE id IN "
+                      f"(SELECT id FROM cases WHERE created_at < {cutoff} ORDER BY score ASC, id ASC LIMIT ?)"),
+            ("insights", f"DELETE FROM insights WHERE id IN "
+                         f"(SELECT id FROM insights WHERE created_at < {cutoff} "
+                         f"ORDER BY (helpful - harmful + uses) ASC, id ASC LIMIT ?)"),
+            ("ideas", f"DELETE FROM ideas WHERE id IN "
+                      f"(SELECT id FROM ideas WHERE created_at < {cutoff} AND rating <= 0 "
+                      f"ORDER BY score ASC, id ASC LIMIT ?)"),
+            ("reflections", f"DELETE FROM reflections WHERE id IN "
+                            f"(SELECT id FROM reflections WHERE created_at < {cutoff} "
+                            f"ORDER BY (helpful - harmful + support + uses) ASC, id ASC LIMIT ?)"),
+        )
+        evicted: dict[str, int] = {}
+        batch = 256
+        for label, sql in ladder:
+            while self.disk_usage()["used_bytes"] > target:
+                cur = self._db.execute(sql, (batch,))
+                if not cur.rowcount:
+                    break
+                evicted[label] = evicted.get(label, 0) + cur.rowcount
+                self._db.commit()
+            if self.disk_usage()["used_bytes"] <= target:
+                break
+        if evicted:
+            self._insight_cache = None
+            try:
+                self._db.execute("VACUUM")  # return freed pages to the OS
+            except sqlite3.OperationalError:
+                pass  # locked; freed pages still get reused by future inserts
+        return evicted
+
+    # ---- meta (daemon-published state) --------------------------------------
+
+    def set_meta(self, key: str, value: str) -> None:
+        self._db.execute(
+            "INSERT INTO meta (key, value) VALUES (?, ?) "
+            "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            (key, str(value)),
+        )
+        self._db.commit()
+
+    def get_meta(self, key: str, default: str = "") -> str:
+        row = self._db.execute("SELECT value FROM meta WHERE key=?", (key,)).fetchone()
+        return row["value"] if row else default
+
+    def add_doc(self, source: str, text: str, embedding: list[float] | None) -> None:
+        self._db.execute(
+            "INSERT INTO docs (source, text, embedding, created_at) VALUES (?,?,?,?)",
+            (source[:300], text[:4000], json.dumps(embedding) if embedding else None, time.time()),
+        )
+        self._db.commit()
+
+    def all_docs(self, limit: int = 4000) -> list[tuple[str, list[float] | None]]:
+        rows = self._db.execute(
+            "SELECT text, embedding FROM docs ORDER BY id DESC LIMIT ?", (limit,)
+        ).fetchall()
+        return [(r["text"] or "", json.loads(r["embedding"]) if r["embedding"] else None) for r in rows]
+
+    def doc_count(self) -> int:
+        return int(self._db.execute("SELECT COUNT(*) FROM docs").fetchone()[0])
+
+    def area_stats(self) -> dict[str, dict[str, int]]:
+        """Per-area self-play attempt/solve counts — the difficulty curriculum."""
+        raw = self.get_meta("selfplay_areas", "")
+        try:
+            return json.loads(raw) if raw else {}
+        except json.JSONDecodeError:
+            return {}
+
+    # Recency weight for the competence EMA: recent outcomes dominate so the map
+    # tracks CURRENT skill (and its delta), not a slow lifetime average.
+    _COMPETENCE_EMA_ALPHA = 0.30
+
+    def record_area_outcome(self, area: str, solved: bool, score: float | None = None) -> None:
+        """Record a GROUNDED outcome for an area (verified self-play, bench, or a
+        real-task eval score). This is the ONLY input to the competence map — the
+        model never rates its own competence, it is measured from what happened."""
+        outcome = float(score) if score is not None else (1.0 if solved else 0.0)
+        outcome = max(0.0, min(1.0, outcome))
+        stats = self.area_stats()
+        a = stats.setdefault(area, {"attempts": 0, "solves": 0})
+        a["attempts"] += 1
+        if solved:
+            a["solves"] += 1
+        prev = a.get("ema")
+        alpha = self._COMPETENCE_EMA_ALPHA
+        a["ema"] = outcome if prev is None else alpha * outcome + (1 - alpha) * float(prev)
+        a["updated_at"] = time.time()
+        self.set_meta("selfplay_areas", json.dumps(stats))
+
+    def competence_map(self) -> dict[str, dict[str, float]]:
+        """The self-model: per-area measured competence + uncertainty + a learning
+        priority (weak & uncertain areas rank highest — the frontier worth pushing).
+        Derived purely from grounded outcomes recorded via record_area_outcome."""
+        stats = self.area_stats()
+        out: dict[str, dict[str, float]] = {}
+        for area, a in stats.items():
+            n = int(a.get("attempts", 0) or 0)
+            solves = int(a.get("solves", 0) or 0)
+            ema = a.get("ema")
+            comp = float(ema) if ema is not None else (solves / n if n else 0.5)
+            # Beta(solves+1, fails+1) posterior std = how unsure we are.
+            alpha, beta = solves + 1, (n - solves) + 1
+            var = (alpha * beta) / ((alpha + beta) ** 2 * (alpha + beta + 1))
+            unc = var ** 0.5
+            # Priority: attack weak, uncertain areas; unseen areas are maximal.
+            priority = 1.0 if n == 0 else round(0.6 * (1.0 - comp) + 0.4 * min(1.0, unc * 3.4), 4)
+            out[area] = {
+                "attempts": n, "solves": solves,
+                "competence": round(comp, 4), "uncertainty": round(unc, 4),
+                "priority": priority, "updated_at": float(a.get("updated_at", 0) or 0),
+            }
+        return out
+
+    def memory_stats(self) -> dict[str, int]:
+        def _n(sql: str) -> int:
+            return int(self._db.execute(sql).fetchone()[0])
+        return {
+            "insights": _n("SELECT COUNT(*) FROM insights"),
+            "reflections": _n("SELECT COUNT(*) FROM reflections"),
+            "cases": _n("SELECT COUNT(*) FROM cases"),
+            "styles": _n("SELECT COUNT(*) FROM styles"),
+            "ideas": _n("SELECT COUNT(*) FROM ideas"),
+        }
+
+    # ---- ideas (discoveries generated during dreaming) ----------------------
+
+    def add_idea(self, statement: str, elaboration: str, embedding: list[float] | None,
+                 novelty: float, value: float, score: float, parents: list[str]) -> None:
+        self._db.execute(
+            "INSERT INTO ideas (statement, elaboration, embedding, novelty, value, score, parents, created_at) "
+            "VALUES (?,?,?,?,?,?,?,?)",
+            (statement[:1000], (elaboration or "")[:4000], json.dumps(embedding) if embedding else None,
+             novelty, value, score, json.dumps(parents)[:2000], time.time()),
+        )
+        self._db.commit()
+
+    def all_ideas(self, include_dismissed: bool = True) -> list[tuple[int, str, list[float] | None, int]]:
+        """(id, statement, embedding, rating) for novelty comparison and dedup."""
+        where = "" if include_dismissed else "WHERE rating >= 0"
+        rows = self._db.execute(
+            f"SELECT id, statement, embedding, rating FROM ideas {where} ORDER BY id DESC LIMIT 4000"
+        ).fetchall()
+        return [(r["id"], r["statement"] or "", json.loads(r["embedding"]) if r["embedding"] else None, r["rating"])
+                for r in rows]
+
+    def list_ideas(self, limit: int = 30) -> list[sqlite3.Row]:
+        # Liked ideas float to the top, dismissed sink; then by score.
+        return self._db.execute(
+            "SELECT id, statement, elaboration, novelty, value, score, parents, rating, created_at "
+            "FROM ideas ORDER BY rating DESC, score DESC, id DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+
+    def rate_idea(self, idea_id: int, rating: int) -> bool:
+        """Human feedback: 1 liked, -1 dismissed, 0 neutral. Returns True if a row changed."""
+        rating = max(-1, min(1, int(rating)))
+        cur = self._db.execute("UPDATE ideas SET rating=? WHERE id=?", (rating, idea_id))
+        self._db.commit()
+        return cur.rowcount > 0
+
+    def liked_idea_embeddings(self) -> list[list[float]]:
+        """Embeddings of liked ideas — the operator's taste profile for steering."""
+        rows = self._db.execute("SELECT embedding FROM ideas WHERE rating > 0 AND embedding IS NOT NULL").fetchall()
+        return [json.loads(r["embedding"]) for r in rows]
+
+    def cap_ideas(self, cap: int) -> int:
+        """Keep the best `cap` ideas (liked first, then by score, then newest).
+        cap <= 0 means unlimited (the disk budget governs instead)."""
+        if cap <= 0:
+            return 0
+        cur = self._db.execute(
+            "DELETE FROM ideas WHERE id NOT IN "
+            "(SELECT id FROM ideas ORDER BY rating DESC, score DESC, id DESC LIMIT ?)",
+            (cap,),
+        )
+        self._db.commit()
+        return cur.rowcount
 
     # ---- evolved styles (GEPA) ------------------------------------------------
 
@@ -342,6 +821,11 @@ class Store:
 
     def list_styles(self, kind: str) -> list[sqlite3.Row]:
         return self._db.execute("SELECT id, hint FROM styles WHERE kind=? ORDER BY id", (kind,)).fetchall()
+
+    def all_styles(self) -> list[sqlite3.Row]:
+        """(id, kind, hint) for every evolved style across all kinds — read-only
+        aggregation for the dashboard's styles panel (list_styles is per-kind)."""
+        return self._db.execute("SELECT id, kind, hint FROM styles ORDER BY kind, id").fetchall()
 
     # ---- bandit state -----------------------------------------------------
 
