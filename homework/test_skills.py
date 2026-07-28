@@ -92,6 +92,37 @@ def test_unknown_skill_lists_available():
     asyncio.run(go())
 
 
+def test_toolbox_skill_dispatch():
+    """ToolBox.run('skill', ...) reaches the registry via a faked docker exec."""
+    import types
+
+    from enigma.tools import ToolBox
+
+    async def go():
+        tb = ToolBox.__new__(ToolBox)  # bypass __init__ (needs cfg/http)
+        tb._container = "fakecid"
+        tb._workdir = "/workspace"
+        tb._names = ("shell", "write", "read", "calc", "skill")
+        tb.cfg = types.SimpleNamespace(tool_timeout_s=60, tool_result_chars=10000)
+        tb.http = None
+
+        async def fake_docker(*args, timeout=None, input_bytes=None):
+            assert args[:2] == ("exec", "-i"), args
+            if args[3] == "nm":
+                return 0, "00000000004011d6 T win\n"
+            if args[3] == "readelf":
+                return 0, "  Type:  EXEC (Executable file)\n"
+            return 1, "unexpected"
+
+        tb._docker = fake_docker
+        out = await tb.run("skill", "find_symbol /target/rung1 win")
+        assert "0x4011d6" in out, out
+        out = await tb.run("skill", "bogus x")
+        assert "unknown skill" in out and "deliver_stdin" in out, out
+
+    asyncio.run(go())
+
+
 def main():
     # cyclic round-trip: every 4-byte fragment locates itself
     pat = cyclic(256)
@@ -114,6 +145,7 @@ def main():
     test_discover_offset_fallback()
     test_deliver_stdin()
     test_unknown_skill_lists_available()
+    test_toolbox_skill_dispatch()
     assert "discover_offset" in skill_docs() and "deliver_stdin" in skill_docs()
     print("test_skills OK")
 

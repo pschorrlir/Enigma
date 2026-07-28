@@ -32,6 +32,7 @@ import httpx
 
 from .config import Config
 from .evaluators import _kill_tree
+from .skills import run_skill, skill_docs
 
 log = logging.getLogger("enigma.tools")
 
@@ -95,7 +96,7 @@ class ToolBox:
         see (~13 wasted steps across runs); shell `python3` covers the need."""
         self._container = container_id
         self._workdir = workdir or "/workspace"
-        self._names = ("shell", "write", "read", "calc")
+        self._names = ("shell", "write", "read", "calc", "skill")
 
     @property
     def in_container(self) -> bool:
@@ -126,6 +127,10 @@ class ToolBox:
                 "  write — write a file. FIRST line = path, rest = contents. e.g.\n"
                 "          TOOL write: /workspace/exploit.py\n          import sys\n          ...\n"
                 "  calc  — evaluate a math expression ON THE HOST.\n"
+                "  skill — run a curated exploitation procedure (executes host-side, "
+                "reliable): TOOL skill: <name> <args>. Available skills:\n"
+                + skill_docs() + "\n"
+                "          e.g. TOOL skill: discover_offset /target/rung1\n"
                 "When the objective is complete, write on its own line: DONE: <one-line summary>."
             )
         return (
@@ -159,6 +164,8 @@ class ToolBox:
                 return await self._search(arg)
             if name == "calc":
                 return self._calc(arg)
+            if name == "skill":
+                return await self._skill(arg)
             return f"unknown tool '{name}'; available: {', '.join(self._names)}"
         except Exception as e:  # a tool must never crash the generation
             log.warning("tool %s failed: %s", name, e)
@@ -171,16 +178,19 @@ class ToolBox:
         path = path.strip()
         return path if path.startswith("/") else f"{self._workdir.rstrip('/')}/{path}"
 
-    async def _docker(self, *args: str, timeout: float | None = None) -> tuple[int, str]:
+    async def _docker(self, *args: str, timeout: float | None = None,
+                      input_bytes: bytes | None = None) -> tuple[int, str]:
         proc = await asyncio.create_subprocess_exec(
             "docker", *args,
-            stdin=asyncio.subprocess.DEVNULL,
+            stdin=asyncio.subprocess.PIPE if input_bytes is not None
+                  else asyncio.subprocess.DEVNULL,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,  # merge; agents want combined output
             start_new_session=True,
         )
         try:
-            out, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout or self.cfg.tool_timeout_s)
+            out, _ = await asyncio.wait_for(proc.communicate(input_bytes),
+                                            timeout=timeout or self.cfg.tool_timeout_s)
         except asyncio.TimeoutError:
             await _kill_tree(proc)
             return 124, f"(timed out after {timeout or self.cfg.tool_timeout_s:.0f}s)"
@@ -188,6 +198,19 @@ class ToolBox:
             await _kill_tree(proc)
             raise
         return proc.returncode, out.decode(errors="replace")
+
+    async def _cexec(self, *argv: str, input_bytes: bytes | None = None,
+                     timeout: float | None = None) -> tuple[int, str]:
+        """Exec argv inside the bound container with optional stdin — the
+        callable handed to skill coroutines (see enigma/skills.py)."""
+        return await self._docker("exec", "-i", self._container, *argv,
+                                  input_bytes=input_bytes, timeout=timeout)
+
+    async def _skill(self, arg: str) -> str:
+        if self._container is None:
+            return "no container bound"
+        name, _, rest = arg.strip().partition(" ")
+        return self._clip(await run_skill(name.strip(), rest.strip(), self._cexec))
 
     async def _shell(self, cmd: str) -> str:
         if self._container is None:
