@@ -326,6 +326,52 @@ def test_pwn_tcp_injects_relay():
     assert 'f"' not in _RELAY_SRC and "os.set_blocking" not in _RELAY_SRC  # py3.5
 
 
+def test_run_steps_dead_target_write_reports():
+    """Target dies mid-session: stdin.write raises; run_steps must return
+    diagnostic text (never raise) with the transcript so far."""
+
+    class _DeadStdin(_FakeStdin):
+        def write(self, data):
+            raise ConnectionResetError(104, "Connection reset by peer")
+
+    proc = FakeProc(b"main: 0x1000\n", [b"never used\n"])
+    proc.stdin = _DeadStdin(proc)
+
+    async def go():
+        return await run_steps(_fake_spawn(proc), ("/t",),
+                               [("expect", r"main:\s*(0x[0-9a-f]+)"),
+                                ("send", "A*72 + p64({leak})")])
+
+    out = asyncio.run(go())
+    assert "send FAILED" in out and "ConnectionResetError" in out, out
+    assert "main: 0x1000" in out, out  # transcript so far is included
+
+
+def test_run_steps_nonnumeric_leak_reports():
+    """Capture group matching non-numeric text must be a diagnostic, not a
+    ValueError out of the coroutine."""
+    proc = FakeProc(b"main: ZZZ\n", [])
+
+    async def go():
+        return await run_steps(_fake_spawn(proc), ("/t",),
+                               [("expect", r"main:\s*(\S+)"), ("send", "A*1")])
+
+    out = asyncio.run(go())
+    assert "non-numeric leak" in out and "captured 'ZZZ'" in out, out
+    assert r"(\\S+)" in out, out  # the offending regex is shown (%r-escaped)
+
+
+def test_run_steps_no_send_guard():
+    proc = FakeProc(b"banner\n", [])
+
+    async def go():
+        return await run_steps(_fake_spawn(proc), ("/t",),
+                               [("expect", r"banner:")])
+
+    out = asyncio.run(go())
+    assert "no send step" in out, out
+
+
 def test_pwn_stdin_rejects_hex8():
     async def go():
         from enigma.skills import run_skill
@@ -367,6 +413,9 @@ def main():
     test_run_steps_hex8_prefix()
     test_run_steps_multi_expect_leak_vars()
     test_pwn_tcp_injects_relay()
+    test_run_steps_dead_target_write_reports()
+    test_run_steps_nonnumeric_leak_reports()
+    test_run_steps_no_send_guard()
     test_pwn_stdin_rejects_hex8()
     print("test_skills OK")
 

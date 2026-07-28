@@ -354,6 +354,11 @@ def _to_int(text: str) -> int:
 async def run_steps(spawn, argv: tuple, steps: list, hex8: bool = False) -> str:
     """Drive one interactive session through expect/send steps. NEVER raises —
     every failure comes back as diagnostic text with what was actually read."""
+    send_idx = [i for i, (op, _) in enumerate(steps) if op == "send"]
+    if not send_idx:
+        ops = ", ".join(op for op, _ in steps) or "none"
+        return "no send step — nothing to deliver (steps: %s)" % ops
+    last_send = send_idx[-1]
     try:
         proc = await spawn(*argv)
     except Exception as e:
@@ -362,7 +367,6 @@ async def run_steps(spawn, argv: tuple, steps: list, hex8: bool = False) -> str:
     captured = 0
     transcript: list = []
     buf = ""  # unconsumed text carried between expects
-    last_send = max(i for i, (op, _) in enumerate(steps) if op == "send")
     try:
         for i, (op, val) in enumerate(steps):
             if op == "expect":
@@ -376,7 +380,13 @@ async def run_steps(spawn, argv: tuple, steps: list, hex8: bool = False) -> str:
                                (seen + buf)[-1200:]))
                 if m.groups():
                     captured += 1
-                    v = _to_int(m.group(1))
+                    try:
+                        v = _to_int(m.group(1))
+                    except ValueError:
+                        return ("captured non-numeric leak: expect %r captured "
+                                "%r — its capture group must match a number "
+                                "(e.g. 0x[0-9a-f]+)"
+                                % (val, m.group(1)))
                     leaks["leak%d" % captured] = v
                     leaks["leak"] = v
             else:  # send
@@ -386,8 +396,14 @@ async def run_steps(spawn, argv: tuple, steps: list, hex8: bool = False) -> str:
                     return "bad send template: %s" % e
                 if hex8 and i == last_send:
                     payload = ("%08x" % len(payload)).encode() + payload
-                proc.stdin.write(payload)
-                await proc.stdin.drain()
+                try:
+                    proc.stdin.write(payload)
+                    await proc.stdin.drain()
+                except (BrokenPipeError, ConnectionResetError, OSError) as e:
+                    return ("send FAILED: target died while writing %d bytes "
+                            "(%s: %s).\ntranscript so far:\n%s"
+                            % (len(payload), type(e).__name__, e,
+                               "\n".join(t for t in transcript if t)[-1200:]))
                 transcript.append(">> sent %d bytes" % len(payload))
         try:
             proc.stdin.close()
