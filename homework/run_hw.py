@@ -180,8 +180,26 @@ async def run_rung(rung, model, max_steps, timeout, keep):
         else:
             sh("docker", "rm", "-f", name)
 
-    print("[run_hw] rung%d status=%s steps=%s transcript=%s expected=%s"
+    skill_steps = 0
+    try:
+        with open(transcript_path, encoding="utf-8") as fh:
+            for line in fh:
+                try:
+                    r_ = json.loads(line)
+                except (json.JSONDecodeError, ValueError):
+                    continue
+                if r_.get("action") == "tool" and r_.get("tool") == "skill":
+                    skill_steps += 1
+    except OSError:
+        pass
+    result["skill_steps"] = skill_steps
+    result["solved_with_skill"] = (result.get("status") in ("solved", "done")
+                                   and skill_steps > 0)
+
+    print("[run_hw] rung%d status=%s steps=%s skill_steps=%s solved_with_skill=%s "
+          "transcript=%s expected=%s"
           % (rung, result.get("status"), result.get("steps"),
+             result.get("skill_steps"), result.get("solved_with_skill"),
              transcript_path, expected))
     return result
 

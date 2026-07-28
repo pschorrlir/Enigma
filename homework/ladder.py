@@ -31,7 +31,7 @@ from run_hw import run_rung, _load_enigma_env  # noqa: E402
 
 def _transcript_stats(path: str) -> dict:
     """Intervention/outcome stats for one attempt's transcript JSONL."""
-    steps = pivots = blocked = 0
+    steps = pivots = blocked = skill_steps = 0
     solved = False
     try:
         with open(path, encoding="utf-8") as fh:
@@ -45,6 +45,7 @@ def _transcript_stats(path: str) -> dict:
                     continue
                 if r.get("action") == "tool":
                     steps += 1
+                    skill_steps += r.get("tool") == "skill"
                     res = str(r.get("result", ""))
                     pivots += "harness strategy pivot" in res
                     blocked += "blocked by harness" in res
@@ -53,19 +54,23 @@ def _transcript_stats(path: str) -> dict:
     except OSError:
         pass
     return {"steps": steps, "pivots": pivots, "blocked": blocked,
-            "solved": solved}
+            "skill_steps": skill_steps, "solved": solved}
 
 
 def _print_matrix(rows: list) -> None:
     print("\n=== LADDER MATRIX ===")
-    print("%-6s %-8s %-10s %-6s %-7s %-8s %s" %
-          ("rung", "attempt", "status", "steps", "pivots", "blocked", "transcript"))
+    print("%-6s %-8s %-10s %-6s %-7s %-8s %-6s %s" %
+          ("rung", "attempt", "status", "steps", "pivots", "blocked", "skill",
+           "transcript"))
     for r in rows:
-        print("%-6d %-8d %-10s %-6s %-7s %-8s %s" %
+        print("%-6d %-8d %-10s %-6s %-7s %-8s %-6s %s" %
               (r["rung"], r["attempt"], r["status"], r["steps"],
-               r["pivots"], r["blocked"], os.path.basename(r["transcript"])))
-    solved = sum(1 for r in rows if r["solved"])
-    print("solves: %d/%d attempts" % (solved, len(rows)))
+               r["pivots"], r["blocked"], r["skill_steps"],
+               os.path.basename(r["transcript"])))
+    solved = [r for r in rows if r["solved"]]
+    assisted = sum(1 for r in solved if r.get("skill_steps"))
+    print("solves: %d/%d attempts (%d skill-assisted, %d unaided)" %
+          (len(solved), len(rows), assisted, len(solved) - assisted))
 
 
 def _dream() -> None:
@@ -90,13 +95,15 @@ async def _drive(args) -> list:
             tx = max(txs, key=os.path.getmtime) if txs else ""
             stats = _transcript_stats(tx) if tx else {
                 "steps": res.get("steps", 0), "pivots": 0, "blocked": 0,
+                "skill_steps": 0,
                 "solved": res.get("status") in ("solved", "done")}
             rows.append({"rung": rung, "attempt": attempt,
                          "status": res.get("status"),
                          "solved": res.get("status") in ("solved", "done")
                                    or stats["solved"],
                          "steps": stats["steps"], "pivots": stats["pivots"],
-                         "blocked": stats["blocked"], "transcript": tx,
+                         "blocked": stats["blocked"],
+                         "skill_steps": stats["skill_steps"], "transcript": tx,
                          "wall_s": int((datetime.datetime.now() - before)
                                        .total_seconds())})
             if args.stop_on_solve and rows[-1]["solved"]:

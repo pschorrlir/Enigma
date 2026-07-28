@@ -11,14 +11,16 @@ from ladder import _transcript_stats
 
 
 def main():
-    # synthetic transcript: 3 tool steps (one pivot, one block), then done
+    # synthetic transcript: 4 tool steps (one pivot, one block, one skill), then done
     recs = [
         {"step": 1, "action": "tool", "tool": "shell", "arg": "ls", "result": "ok"},
         {"step": 2, "action": "tool", "tool": "shell", "arg": "gdb x",
          "result": "[harness strategy pivot] proposes:\nstop that\n\nrest"},
         {"step": 3, "action": "tool", "tool": "read", "arg": "/a",
          "result": "[blocked by harness] NOT executed"},
-        {"step": 4, "action": "done", "summary": "flag written"},
+        {"step": 4, "action": "tool", "tool": "skill",
+         "arg": "discover_offset /target/rung1", "result": "offset to saved return address: 72"},
+        {"step": 5, "action": "done", "summary": "flag written"},
     ]
     path = os.path.join(HERE, "out", "_test_synth.jsonl")
     os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -27,9 +29,10 @@ def main():
             fh.write(json.dumps(r) + "\n")
 
     stats = _transcript_stats(path)
-    assert stats["steps"] == 3, stats          # tool steps only
+    assert stats["steps"] == 4, stats          # tool steps only
     assert stats["pivots"] == 1, stats
     assert stats["blocked"] == 1, stats
+    assert stats["skill_steps"] == 1, stats
     assert stats["solved"] is True, stats      # action == "done"
     os.unlink(path)
     print("test_ladder OK")
