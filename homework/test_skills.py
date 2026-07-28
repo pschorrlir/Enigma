@@ -181,6 +181,44 @@ def test_render_template_leaks():
         assert "leak3" in str(e)
 
 
+def test_render_template_negative_leak_raises():
+    """Negative leak arithmetic must raise loudly, not corrupt the payload."""
+    try:
+        render_template("p64({leak}-0x2000)", {"leak": 0x1000})
+        raise AssertionError("expected ValueError")
+    except ValueError as e:
+        assert "negative" in str(e), e
+
+
+def test_run_steps_out_of_range_pack_reports():
+    """p64 overflow (struct.error) must come back as a diagnostic, not raise."""
+    proc = FakeProc(b"main: 0x1000\n", [])
+
+    async def go():
+        return await run_steps(_fake_spawn(proc), ("/t",),
+                               [("expect", r"main:\s*(0x[0-9a-f]+)"),
+                                ("send", "p64({leak}+0xffffffffffffffff)")])
+
+    out = asyncio.run(go())
+    assert "bad send template" in out, out
+    assert proc.stdin.written == b"", proc.stdin.written
+
+
+def test_run_steps_negative_leak_reports():
+    """Negative leak arithmetic through run_steps: loud diagnostic, no literal
+    corruption written to the target."""
+    proc = FakeProc(b"main: 0x1000\n", [])
+
+    async def go():
+        return await run_steps(_fake_spawn(proc), ("/t",),
+                               [("expect", r"main:\s*(0x[0-9a-f]+)"),
+                                ("send", "A*8 + p64({leak}-0x2000)")])
+
+    out = asyncio.run(go())
+    assert "bad send template" in out and "negative" in out, out
+    assert proc.stdin.written == b"", proc.stdin.written
+
+
 class _FakeStdin:
     def __init__(self, proc):
         self.proc = proc
@@ -443,6 +481,7 @@ def main():
     test_parse_steps_explicit_with_hex8()
     test_parse_steps_errors()
     test_render_template_leaks()
+    test_render_template_negative_leak_raises()
     test_run_steps_leak_and_deliver()
     test_run_steps_expect_failure_reports_read()
     test_run_steps_hex8_prefix()
@@ -453,6 +492,8 @@ def main():
     test_run_steps_no_send_guard()
     test_pwn_stdin_rejects_hex8()
     test_toolbox_pwn_dispatch()
+    test_run_steps_out_of_range_pack_reports()
+    test_run_steps_negative_leak_reports()
     print("test_skills OK")
 
 

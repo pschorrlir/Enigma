@@ -175,8 +175,8 @@ def render_template(template: str, leaks: dict) -> bytes:
     """Substitute {leak}/{leakN} with captured integers (offset inside the
     braces `{leak-0xb9}` or just outside `{leak}-0xb9` — both accepted), then
     parse terms: 'X*N' repeats, p32/p64 packed addresses; anything else is
-    LITERAL text (menu answers like '1'). Raises ValueError only on unknown
-    leak refs or an empty template."""
+    LITERAL text (menu answers like '1'). Raises ValueError on unknown leak
+    refs, negative leak arithmetic, or an empty template."""
     def sub(m):
         name = m.group(1)
         if name not in leaks:
@@ -187,6 +187,11 @@ def render_template(template: str, leaks: dict) -> bytes:
             if off:
                 delta = int(off, 0)
                 v = v + delta if sign == "+" else v - delta
+        if v < 0:
+            raise ValueError("leak arithmetic went negative: %s computed "
+                             "%d (leak %d %s %s) — check the offset, hex(-x) "
+                             "would corrupt the payload as literal text"
+                             % (m.group(0), v, leaks[name], sign, off))
         return hex(v)
     template = _LEAK_RE.sub(sub, template)
     out = b""
@@ -392,7 +397,7 @@ async def run_steps(spawn, argv: tuple, steps: list, hex8: bool = False) -> str:
             else:  # send
                 try:
                     payload = render_template(val, leaks)
-                except ValueError as e:
+                except (ValueError, struct.error, UnicodeEncodeError) as e:
                     return "bad send template: %s" % e
                 if hex8 and i == last_send:
                     payload = ("%08x" % len(payload)).encode() + payload
