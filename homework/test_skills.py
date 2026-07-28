@@ -9,7 +9,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
 
 from enigma.skills import (cyclic, cyclic_find, parse_payload, parse_steps,  # noqa: E402
-                           render_template, run_skill, skill_docs)  # noqa: E402
+                           render_template, run_skill, skill_docs,  # noqa: E402
+                           run_steps, _RELAY_PATH)  # noqa: E402
 
 
 def _fake_cexec(canned):
@@ -180,6 +181,159 @@ def test_render_template_leaks():
         assert "leak3" in str(e)
 
 
+class _FakeStdin:
+    def __init__(self, proc):
+        self.proc = proc
+        self.written = b""
+
+    def write(self, data):
+        self.written += data
+        self.proc._on_write(data)
+
+    async def drain(self):
+        pass
+
+    def close(self):
+        pass
+
+
+class FakeProc:
+    """Scripted interactive process: preloaded stdout, then per-send responses.
+
+    EOF semantics: with no responses, EOF immediately after the banner; with
+    responses, EOF right after the last one (so drains never hang). The
+    StreamReader is built lazily on first stdout access — Python 3.13 requires
+    a running loop, and tests construct FakeProc outside asyncio.run."""
+
+    def __init__(self, banner: bytes, responses: list):
+        self._banner = banner
+        self._responses = list(responses)
+        self._reader = None
+        self.stdin = _FakeStdin(self)
+
+    @property
+    def stdout(self):
+        if self._reader is None:
+            import asyncio as _aio
+            self._reader = _aio.StreamReader()
+            self._reader.feed_data(self._banner)
+            if not self._responses:
+                self._reader.feed_eof()
+        return self._reader
+
+    def _on_write(self, data):
+        if self._responses:
+            self.stdout.feed_data(self._responses.pop(0))
+        if not self._responses:
+            self.stdout.feed_eof()
+
+    async def wait(self):
+        return 0
+
+    def kill(self):
+        pass
+
+
+def _fake_spawn(proc):
+    async def spawn(*argv):
+        spawn.argv = argv
+        return proc
+    return spawn
+
+
+def test_run_steps_leak_and_deliver():
+    main_addr = 0x5555555542C2
+    proc = FakeProc(b"rung2: main: 0x%x\n" % main_addr, [b"flag{test}\n"])
+
+    async def go():
+        return await run_steps(
+            _fake_spawn(proc), ("/target/rung2",),
+            [("expect", r"main:\s*(0x[0-9a-f]+)"), ("send", "A*72 + p64({leak}-0xb9)")])
+
+    out = asyncio.run(go())
+    assert "flag{test}" in out, out
+    assert proc.stdin.written == b"A" * 72 + struct.pack("<Q", main_addr - 0xB9), \
+        proc.stdin.written
+
+
+def test_run_steps_expect_failure_reports_read():
+    proc = FakeProc(b"nothing useful here\n", [])
+
+    async def go():
+        return await run_steps(_fake_spawn(proc), ("/t",),
+                               [("expect", r"main:(0x\S+)"), ("send", "A*1")])
+
+    out = asyncio.run(go())
+    assert "expect FAILED" in out and "nothing useful here" in out, out
+
+
+def test_run_steps_hex8_prefix():
+    proc = FakeProc(b"main: 0x1000\n", [b"ok\n"])
+
+    async def go():
+        return await run_steps(_fake_spawn(proc), ("/t",),
+                               [("expect", r"main:\s*(0x[0-9a-f]+)"),
+                                ("send", "A*72 + p64({leak}-0xb9)")], hex8=True)
+
+    asyncio.run(go())
+    payload = b"A" * 72 + struct.pack("<Q", 0x1000 - 0xB9)
+    assert proc.stdin.written == ("%08x" % len(payload)).encode() + payload
+
+
+def test_run_steps_multi_expect_leak_vars():
+    proc = FakeProc(b"base: 0x2000\nmain: 0x2c2\n", [b"flag{multi}\n"])
+
+    async def go():
+        return await run_steps(
+            _fake_spawn(proc), ("/t",),
+            [("expect", r"base:\s*(0x[0-9a-f]+)"), ("expect", r"main:\s*(0x[0-9a-f]+)"),
+             ("send", "p64({leak1}) + p64({leak2}) + p64({leak})")])
+
+    out = asyncio.run(go())
+    assert "flag{multi}" in out, out
+    want = struct.pack("<Q", 0x2000) + struct.pack("<Q", 0x2C2) + struct.pack("<Q", 0x2C2)
+    assert proc.stdin.written == want, proc.stdin.written
+
+
+def test_pwn_tcp_injects_relay():
+    proc = FakeProc(b"main: 0x1000\n", [b"flag{tcp}\n"])
+    calls = []
+
+    async def cexec(*argv, input_bytes=None, timeout=None):
+        calls.append((argv, input_bytes))
+        if argv[0] == "test":
+            return 1, ""  # relay missing
+        return 0, ""
+
+    async def go():
+        from enigma.skills import run_skill
+        spawn = _fake_spawn(proc)
+        out = await run_skill(
+            "pwn_tcp",
+            r"10.0.0.2 8000 main:\s*(0x[0-9a-f]+) A*72 + p64({leak}-0xb9) hex8",
+            cexec, spawn)
+        assert spawn.argv == ("python3", _RELAY_PATH, "10.0.0.2", "8000"), \
+            spawn.argv
+        return out
+
+    out = asyncio.run(go())
+    assert "flag{tcp}" in out, out
+    assert calls[0][0] == ("test", "-f", _RELAY_PATH), calls
+    assert calls[1][0][:2] == ("bash", "-c") and calls[1][1], calls
+    payload = b"A" * 72 + struct.pack("<Q", 0x1000 - 0xB9)
+    assert proc.stdin.written == ("%08x" % len(payload)).encode() + payload
+    from enigma.skills import _RELAY_SRC
+    assert 'f"' not in _RELAY_SRC and "os.set_blocking" not in _RELAY_SRC  # py3.5
+
+
+def test_pwn_stdin_rejects_hex8():
+    async def go():
+        from enigma.skills import run_skill
+        return await run_skill("pwn_stdin", "/t main:(0x1) A*1 hex8", None, None)
+    out = asyncio.run(go())
+    assert "hex8" in out and "pwn_tcp" in out, out
+
+
 def main():
     # cyclic round-trip: every 4-byte fragment locates itself
     pat = cyclic(256)
@@ -208,6 +362,12 @@ def main():
     test_parse_steps_explicit_with_hex8()
     test_parse_steps_errors()
     test_render_template_leaks()
+    test_run_steps_leak_and_deliver()
+    test_run_steps_expect_failure_reports_read()
+    test_run_steps_hex8_prefix()
+    test_run_steps_multi_expect_leak_vars()
+    test_pwn_tcp_injects_relay()
+    test_pwn_stdin_rejects_hex8()
     print("test_skills OK")
 
 
