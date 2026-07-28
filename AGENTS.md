@@ -40,6 +40,18 @@ engine/tools/memory/config/.env + AGENTS.md; exploitgym bridge + scripts/*).
 Commit deliberately, don't lose it. A DB backup was taken before playbook
 pruning: `.enigma/enigma.db.bak-*`.
 
+## Skill tools (2026-07-28)
+
+- `TOOL skill: <name> <args>` in container mode — host-side executable
+  procedures (`enigma/skills.py` registry): discover_offset, find_symbol,
+  cyclic, cyclic_find, deliver_stdin. Ported from homework/solve_rung1.py
+  (which stays as the proof artifact).
+- ToolBox._docker gained `input_bytes` (stdin) — skills deliver payloads and
+  patterns through it.
+- Skill usage is measured: `skill_steps` / `solved_with_skill` in run_hw
+  results and the ladder matrix (assisted vs unaided split).
+- Design: docs/superpowers/specs/2026-07-28-skill-tools-design.md
+
 ## What this is
 
 Enigma is a self-improving entity: a persistent memory/self-model loop around local
@@ -271,6 +283,44 @@ vs scoring's flag.txt-only check — open question). All banked as curated lesso
 (ids 321-326); future runs should reach "dead end → arch sweep" by ~step 20.
 **Strongly consider an easier task (arvo_42298 ghostscript stack-WRITE) for the
 first end-to-end flag.**
+
+## ⏸ PAUSED 2026-07-27 late — after bake-off, homework ladder ready
+
+**Actor seat stays qwen2.5-coder:32b.** Final challengers on arvo_42298:
+- **ornith:35b (easy4, halted step 77): WORSE than qwen** — hunted `catflag`
+  LOCALLY (it only exists on the server), created 3 servers without ever
+  sending a payload, rotated source reads (15 skel warnings). The 07-26 "GOOD"
+  verdict doesn't replicate on this task.
+- **laguna-xs-2.1 (easy5, halted step 72): protocol failure** — 68/72 steps
+  prose-only ("Let me start by reading…" on repeat), never emits `TOOL` calls.
+  Not a competence issue; doesn't speak the dialect. Fixable via few-shot tool
+  examples in the system prompt — untried.
+- Deleted from Ollama (user): ornith:9b, qwen3.6:27b, qwen3-coder:30b, gemma4:26b.
+- easy3 (qwen, methodology+PRM): cleanest behavior yet (PHASE sections working,
+  gdb-last applied, zero loops) but infra-killed at step 30 by an Ollama 500
+  DURING the user's model pruning. Fixed: LLMError retries + error records now
+  stream to the live transcript.
+
+**LADDER RESULT 2026-07-28: ZERO SOLVES — capability floor measured.** 5
+attempts (rung1 ×2, rung2 ×2, rung3 ×1 before a 2.5h wall timeout), 48-62
+steps each (~1800s/attempt, ~36s/step with PRM rerank), zero DONE, zero flag
+writes. Behavior was CLEAN (pivots firing, ~0 blocks, no loops) but
+qwen2.5-coder:32b cannot yet execute the full chain (offset discovery →
+payload → delivery → verify) even on ret2win — which solve_rung1.py proves is
+a ~10-step procedure. Conclusion: harness is solved; the gap is craft, and
+imitation (skill compilation / solve-script exemplars / LoRA on solve traces)
+is the lever, not more lessons. 15 auto-lessons banked (74→89, mixed quality —
+pruned 346/349/363 pwntools+homework-specific; banked a curated ret2win
+PROCEDURE card). Dream between rungs 404'd on deleted gemma4:26b — dream
+config needs repointing; its clusters are still python_tests-dominated.
+
+**All runs STOPPED. Homework ladder** (`~/Enigma/homework/`, built + proven
+solvable 2026-07-27; PLAN.md inside) — 3 rungs (ret2win / PIE+leak / OOB index
+leak), `pipenv run python homework/run_hw.py --rung 1` or the driver
+`homework/ladder.py` (solve-rate matrix). Purpose: generate WINS so the
+self-learning loop has fuel — but see above: the model can't win yet even on
+rung 1, so NEXT is skill compilation (solve scripts as executable tools /
+few-shot exemplars), then re-ladder.
 
 ## Challenger verdicts (2026-07-26 late)
 
