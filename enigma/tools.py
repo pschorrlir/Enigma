@@ -206,11 +206,29 @@ class ToolBox:
         return await self._docker("exec", "-i", self._container, *argv,
                                   input_bytes=input_bytes, timeout=timeout)
 
+    async def _docker_spawn(self, *args: str) -> asyncio.subprocess.Process:
+        """Spawn an INTERACTIVE docker process (PIPE stdin/stdout, stderr
+        merged). The caller owns the lifecycle — used by session skills
+        (pwn_stdin/pwn_tcp) that read a leak before writing a payload."""
+        return await asyncio.create_subprocess_exec(
+            "docker", *args,
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+            start_new_session=True,
+        )
+
+    async def _cspawn(self, *argv: str) -> asyncio.subprocess.Process:
+        """Spawn argv interactively inside the bound container (spawn protocol
+        handed to session skills — see enigma/skills.py run_steps)."""
+        return await self._docker_spawn("exec", "-i", self._container, *argv)
+
     async def _skill(self, arg: str) -> str:
         if self._container is None:
             return "no container bound"
         name, _, rest = arg.strip().partition(" ")
-        return self._clip(await run_skill(name.strip(), rest.strip(), self._cexec))
+        return self._clip(await run_skill(name.strip(), rest.strip(),
+                                          self._cexec, self._cspawn))
 
     async def _shell(self, cmd: str) -> str:
         if self._container is None:

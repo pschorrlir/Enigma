@@ -380,6 +380,41 @@ def test_pwn_stdin_rejects_hex8():
     assert "hex8" in out and "pwn_tcp" in out, out
 
 
+def test_toolbox_pwn_dispatch():
+    """TOOL skill: pwn_stdin reaches run_steps via ToolBox._cspawn."""
+    import types
+
+    from enigma.tools import ToolBox
+
+    main_addr = 0x5555555542C2
+    proc = FakeProc(b"main: 0x%x\n" % main_addr, [b"flag{via_toolbox}\n"])
+
+    async def go():
+        tb = ToolBox.__new__(ToolBox)
+        tb._container = "fakecid"
+        tb._workdir = "/workspace"
+        tb._names = ("shell", "write", "read", "calc", "skill")
+        tb.cfg = types.SimpleNamespace(tool_timeout_s=60, tool_result_chars=10000)
+        tb.http = None
+
+        async def fake_spawn(*args):
+            assert args[:3] == ("exec", "-i", "fakecid"), args
+            assert args[3] == "/target/rung2", args
+            return proc
+
+        tb._docker_spawn = fake_spawn
+        out = await tb.run(
+            "skill",
+            r"pwn_stdin /target/rung2 main:\s*(0x[0-9a-f]+) A*72 + p64({leak}-0xb9)")
+        docs = ToolBox.docs(tb)
+        assert "pwn_stdin" in docs and "pwn_tcp" in docs
+        return out
+
+    out = asyncio.run(go())
+    assert "flag{via_toolbox}" in out, out
+    assert proc.stdin.written == b"A" * 72 + struct.pack("<Q", main_addr - 0xB9)
+
+
 def main():
     # cyclic round-trip: every 4-byte fragment locates itself
     pat = cyclic(256)
@@ -417,6 +452,7 @@ def main():
     test_run_steps_nonnumeric_leak_reports()
     test_run_steps_no_send_guard()
     test_pwn_stdin_rejects_hex8()
+    test_toolbox_pwn_dispatch()
     print("test_skills OK")
 
 
