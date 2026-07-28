@@ -7,7 +7,7 @@ attempt-over-attempt solve rate and steps-to-solve is the direct test of
 whether the loop learns from wins.
 
 Usage (from the repo root):
-    pipenv run python homework/ladder.py [--rungs 1,2,3] [--attempts 2]
+    pipenv run python homework/ladder.py [--rungs 1 2 3] [--attempts 2]
         [--model qwen2.5-coder:32b] [--steps 120] [--timeout 1800]
         [--stop-on-solve] [--no-dream]
 """

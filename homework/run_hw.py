@@ -202,7 +202,7 @@ def main():
     for rung in rungs:
         res = asyncio.run(run_rung(rung, args.model, args.steps, args.timeout,
                                    args.keep))
-        if res.get("status") != "solved":
+        if res.get("status") not in ("solved", "done"):
             failures += 1
     sys.exit(1 if failures else 0)
 
