@@ -112,6 +112,17 @@ pruning: `.enigma/enigma.db.bak-*`.
   offset instead of rechecking arithmetic ("Received file size: 88" visible
   in its own outputs). Mechanism proven by solve_rung4.py (PASS); behavior
   gap = arithmetic discipline, not protocol adoption.
+- **CLOUD CRITIC SEAT (2026-07-29): the biggest single lever so far.**
+  `ENIGMA_AGENT_CRITIC_MODEL=cloud:kimi-k3` routes working-memory
+  consolidation + strategy pivots to Kimi k3 (OpenAI-compatible endpoint,
+  `KimiClient` in llm.py; temperature omitted — k3 is fixed at 1; reasoning
+  headroom capped at +2048). A/B on rung 4, identical setup: self-critic
+  exhausted at 120 steps (1 pwn_tcp) vs **cloud-critic SOLVED in 76 steps
+  with ONE decisive pwn_tcp**. k3's working memory visibly enforces phase
+  discipline ("correctly re-entered RECON after phase-skip was flagged") and
+  preserves operational details verbatim. Cost ~55k tokens/run — steering
+  only; actor/PRM/distiller stay local. Design intent (user): k3 forces
+  intelligence INTO the local models, not around them.
 
 ## What this is
 
