@@ -164,6 +164,48 @@ class AnthropicClient:
         return "".join(p.get("text", "") for p in parts if p.get("type") == "text")
 
 
+class KimiClient:
+    """OpenAI-compatible client for Kimi (Moonshot) models — the cloud critic
+    seat. Exploit-transcript analysis trips refusals on some frontier models;
+    kimi-k3 handles it, and this endpoint carries no VRAM cost."""
+
+    BASE = "https://api.moonshot.ai/v1"
+
+    def __init__(self, cfg: Config, http: httpx.AsyncClient):
+        self._cfg = cfg
+        self._http = http
+
+    @property
+    def enabled(self) -> bool:
+        return bool(self._cfg.kimi_api_key)
+
+    async def generate(self, model: str, prompt: str, *, system: str | None = None,
+                       temperature: float | None = None, max_tokens: int = 1200) -> str:
+        if not self.enabled:
+            raise LLMError("KIMI_API_KEY not set; cloud critic unavailable")
+        messages = ([{"role": "system", "content": system}] if system else []) + [
+            {"role": "user", "content": prompt}]
+        # kimi-k3 is a reasoning model and rejects any temperature but 1 —
+        # omit it and take the server default rather than fight per-model rules.
+        body = {"model": model, "messages": messages, "max_tokens": max_tokens}
+        if temperature is not None:
+            body["temperature"] = temperature
+        try:
+            r = await self._http.post(
+                self.BASE + "/chat/completions",
+                json=body,
+                headers={"Authorization": "Bearer " + self._cfg.kimi_api_key},
+                timeout=self._cfg.request_timeout_s,
+            )
+            r.raise_for_status()
+        except httpx.HTTPError as e:
+            raise LLMError(f"kimi generate failed: {e}") from e
+        choices = r.json().get("choices") or []
+        if not choices:
+            raise LLMError("kimi returned no choices")
+        return choices[0].get("message", {}).get("content", "")
+
+
 def is_degenerate(text: str) -> bool:
     """Detect repetition-loop / low-entropy generations (e.g. 'based-based-based…',
     a token or phrase spammed thousands of times) that small models fall into.

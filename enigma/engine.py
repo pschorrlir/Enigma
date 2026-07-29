@@ -44,7 +44,7 @@ from .bandit import BUILTIN_STYLES, Arm, StrategyBandit, build_arms
 from .config import Config
 from .evaluators import EvalResult, Evaluator
 from .llm import (
-    AnthropicClient, GenOut, LLMError, OllamaClient,
+    AnthropicClient, GenOut, KimiClient, LLMError, OllamaClient,
     extract_code, extract_json, is_degenerate, is_nonanswer,
 )
 from .memory import Store
@@ -106,6 +106,7 @@ class Engine:
         self.store = store
         self.ollama = OllamaClient(cfg, http)
         self.cloud = AnthropicClient(cfg, http)
+        self.kimi = KimiClient(cfg, http)
         self.tools = ToolBox(cfg, http)
         self.bandit = StrategyBandit(store)
         # Fast model for cheap meta-ops (reflection, distillation, style evolution).
@@ -352,8 +353,26 @@ class Engine:
                     stop=["\nRESULT:", "\nTOOL RESULT", "\nTOOOL RESULT", "\nOBSERVATION:"],
                 )
             except LLMError as e:
-                transcript.append({"step": step, "error": str(e)})
-                break
+                # Transient Ollama failures (500s during model pruning/eviction —
+                # easy3 died at step 30 this way) get two retries with backoff
+                # before we give up the run.
+                last_err = e
+                for wait in (5, 15):
+                    log.warning("agent step %d LLMError (%s); retrying in %ds", step, e, wait)
+                    await asyncio.sleep(wait)
+                    try:
+                        out = await self.ollama.generate(
+                            model, prompt, system=system, temperature=0.5, num_predict=2048,
+                            stop=["\nRESULT:", "\nTOOL RESULT", "\nTOOOL RESULT", "\nOBSERVATION:"])
+                        last_err = None
+                        break
+                    except LLMError as e2:
+                        last_err = e2
+                if last_err is not None:
+                    record = {"step": step, "error": str(last_err)}
+                    transcript.append(record)
+                    self._emit_step(record, on_step)  # stream it — else the monitor goes silent
+                    break
             text = out.text
             # done_reason="length" means the output was CUT OFF at num_predict —
             # v11b burned 27 steps rewriting a script that kept truncating
@@ -670,6 +689,26 @@ class Engine:
             "DONE: <summary> once the objective is verifiably met.")
         return "\n\n".join(parts)
 
+    async def _critic_generate(self, critic: str, prompt: str, *, system: str,
+                               temperature: float, num_predict: int) -> str:
+        """Route critic calls. 'cloud:<model>' (e.g. cloud:kimi-k3 via
+        ENIGMA_AGENT_CRITIC_MODEL) goes to the Kimi endpoint — a genuinely
+        different perspective with zero VRAM cost, which is the point of the
+        critic seat (config: "a different model curating state catches blind
+        spots the actor shares with itself"). LLMError propagates so callers'
+        local fallbacks (prev WM / default pivot) handle a cloud outage."""
+        if critic.startswith("cloud:"):
+            # Reasoning model: temperature is fixed at 1 (omit it), and
+            # reasoning tokens eat the budget — give it headroom beyond the
+            # visible-answer budget the caller asked for.
+            return await self.kimi.generate(
+                critic[len("cloud:"):], prompt,
+                system=system, max_tokens=num_predict + 4096)
+        out = await self.ollama.generate(
+            critic, prompt, system=system,
+            temperature=temperature, num_predict=num_predict)
+        return out.text
+
     async def _consolidate_working_memory(self, objective: str, prev: str, scroll: list[str]) -> str:
         """Critic pass: fold recent activity into a durable investigation state.
         Runs on the critic model (a second perspective) so it catches drift the
@@ -703,14 +742,14 @@ class Engine:
             "NEXT: the most promising concrete next action"
         )
         try:
-            out = await self.ollama.generate(
+            text = await self._critic_generate(
                 critic, prompt,
                 system="You maintain a precise, factual investigation log for another agent. Be "
                 "concise; preserve confirmed facts; flag any drift from earlier findings.",
                 temperature=0.2, num_predict=1200)
         except LLMError:
             return prev
-        wm = out.text.strip()
+        wm = text.strip()
         return wm[:4000] if len(wm) >= 20 else prev
 
     async def _prm_pick(self, objective: str, working_memory: str,
@@ -757,7 +796,7 @@ class Engine:
             "sentences: what to stop doing, and the concrete alternative to try next."
         )
         try:
-            out = await self.ollama.generate(
+            text = await self._critic_generate(
                 critic, prompt,
                 system="You are a senior exploitation reviewer. The junior agent is stuck in a "
                 "loop; give it one decisive redirection, not a lecture.",
@@ -765,7 +804,7 @@ class Engine:
         except LLMError:
             return ("Stop repeating the current approach. Pick a different primitive or angle "
                     "(e.g. information leak instead of crash-hunting) and test it directly.")
-        return out.text.strip()[:600]
+        return text.strip()[:600]
 
     def _agent_system(self, persona: str) -> str:
         base = (persona + "\n\n") if persona else ""

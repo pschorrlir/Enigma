@@ -85,6 +85,10 @@ class Config:
 
     # Cloud frontier model (Anthropic), used only for cohesion/rubric passes
     anthropic_api_key: str = field(default_factory=lambda: _env("ANTHROPIC_API_KEY", ""))
+    # Kimi (Moonshot) OpenAI-compatible API — the cloud CRITIC seat for agent
+    # runs (working-memory consolidation + strategy pivots). Route by setting
+    # ENIGMA_AGENT_CRITIC_MODEL=cloud:kimi-k3; absent key = local fallback.
+    kimi_api_key: str = field(default_factory=lambda: _env("KIMI_API_KEY", ""))
     cloud_model: str = field(default_factory=lambda: _env("ENIGMA_CLOUD_MODEL", "claude-sonnet-5"))
     cloud_max_calls_per_task: int = field(default_factory=lambda: _env_int("ENIGMA_CLOUD_MAX_CALLS", 2))
     cloud_max_tokens: int = field(default_factory=lambda: _env_int("ENIGMA_CLOUD_MAX_TOKENS", 8192))
