@@ -60,6 +60,13 @@ def main():
     flag = setup_container()
     try:
         test_handler_edges()
+
+        # full solve chain via the proof script
+        r = subprocess.run([sys.executable,
+                            os.path.join(HERE, "solve_rung4.py"), NAME],
+                           capture_output=True, timeout=300)
+        out = r.stdout.decode(errors="replace")
+        assert r.returncode == 0 and "PASS" in out, out + r.stderr.decode(errors="replace")
     finally:
         sh("docker", "rm", "-f", NAME)
     print("test_rung4 OK")
