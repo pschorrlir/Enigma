@@ -20,9 +20,15 @@ void win(void) {
         puts("win: FLAG not set");
 }
 
+/* File-scope so vuln()'s stack frame holds ONLY buf — the overflow must
+ * reach the saved return address cleanly (rung1 mechanics: offset 72).
+ * A local FILE* would sit above buf, shift the retaddr offset, and get
+ * clobbered before fclose() ran. */
+static FILE *f;
+
 void vuln(const char *path) {
     char buf[64];
-    FILE *f = fopen(path, "rb");
+    f = fopen(path, "rb");
     if (!f) {
         puts("cannot open input");
         return;
