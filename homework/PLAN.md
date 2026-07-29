@@ -19,8 +19,9 @@ in the built image.
 | 1 | `rung1_ret2win.c` | ret2win mechanics: offset discovery (De Bruijn + gdb), nm for `win`, `pad + p64(win)` stdin delivery; full RECON→DELIVER methodology | `-static -fno-stack-protector -no-pie -g -O0` |
 | 2 | `rung2_pie_leak.c` | same under PIE: banner leaks `main`, compute `win = leak - off(main) + off(win)`; leak and payload must share one process (ASLR per exec) | `-fno-stack-protector -pie -fPIE -g -O0` |
 | 3 | `rung3_oob_leak.c` | OOB-read index leak — the exact primitive arvo_18224 needed but never yielded: 5-entry table, documented range 0-3, no bounds check, index 4 leaks the flag | `-static -fno-stack-protector -g -O0` |
+| 4 | `rung4_server.c` (socat-served) | capstone: ret2win behind the ExploitGym hex8 protocol; flag ONLY in the server process env (never on disk) — server contact + protocol + deliver in one chain | served by `server/start_server.sh` |
 
-Run: `pipenv run python homework/run_hw.py --rung {1,2,3,all} [--model M] [--steps N] [--timeout S] [--keep]`.
+Run: `pipenv run python homework/run_hw.py --rung {1,2,3,4,all} [--model M] [--steps N] [--timeout S] [--keep]`.
 Transcripts land in `out/rungN_<ts>.jsonl`; learning runs on every outcome
 (timeouts rebuild a partial result from the transcript, bridge-style).
 
@@ -36,10 +37,12 @@ Transcripts land in `out/rungN_<ts>.jsonl`; learning runs on every outcome
 
 ## Expansion
 
-- **More rungs**: 4 canary+leak (brute/leak canary then ret2win), 5
-  ret2system/ret2libc (no win(), dynamic link, `system("/bin/cat /flag.txt")`
-  chain), 6 format string (`printf(buf)` leak→write intro), 7 heap intro
-  (tcache poisoning on a fixed allocator).
+- **More rungs** (corpus-research priorities): rung 4 capstone DONE (socat
+  hex8 server, env-only flag). 5 canary+leak (brute/leak canary then
+  ret2win), 6 ret2libc/ROP to a catflag-style SUID target (no win(),
+  dynamic link), 7 heap-overflow WRITE, 8 UAF, 9 data-only attack.
+  FORMAT-STRING rung DEPRIORITIZED — rare in the ExploitGym class
+  distribution.
 - **Auto-generated variants**: template the rungs (buffer size, win name,
   mitigation set, banner format) so memorized offsets don't count as
   competence; a variant generator turns one rung into a distribution.
