@@ -123,6 +123,14 @@ pruning: `.enigma/enigma.db.bak-*`.
   preserves operational details verbatim. Cost ~55k tokens/run — steering
   only; actor/PRM/distiller stay local. Design intent (user): k3 forces
   intelligence INTO the local models, not around them.
+- **PERFECT MATRIX 2026-07-29 ~19:05: 6/6 SOLVES** (ladder_20260729T190503.json).
+  qwen2.5-coder:14b actor + cloud:kimi-k3 critic + directive DONE-rejection +
+  filename-evasion guard: rung2 33/17 steps, rung3 9/12, rung4 65/83 — 3
+  skill-assisted, 3 unaided. From ZERO solves in project history to a clean
+  sweep in ~36 hours. Seat assignments: 14b acts, k3 directs (≤55k k3
+  tokens/run), 32b = fallback for hard tasks. k3's working memory on every
+  run doubles as critic-distillation signal for a future LOCAL critic.
+  Next: ExploitGym arvo_42298 with the full stack; PLAN.md rungs 5+.
 
 ## What this is
 
