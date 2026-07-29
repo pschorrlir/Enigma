@@ -62,14 +62,16 @@ pruning: `.enigma/enigma.db.bak-*`.
   an in-container TCP relay; `hex8` = ExploitGym's 8-byte-hex size prefix).
   {leak}/{leakN}/{leak±0xN} template vars bind expect captures.
   Design: docs/superpowers/specs/2026-07-28-interactive-skills-design.md
-- **Rung-2 behavioral gate UNMET (2026-07-28)**: mechanism proven (live test
-  solves rung 2 through pwn_stdin) but the agent run timed out at 64 steps,
-  17 skill_steps, no solve. The model DID discover pwn_stdin (9 calls) and
-  the session mechanics worked; it failed on offset arithmetic
-  (`{leak}+0x1209` — win's file offset added to the runtime leak — instead of
-  `{leak}-0xb9`) and regressed to pwntools-in-container (not installed).
-  Next lever: pinned lesson with the exact rung-2 command shape
-  (win = leak − (off(main) − off(win))), not more mechanism.
+- **Rung-2 gate: SOLVED 2026-07-28 ~20:48** (9 steps, 4 skill_steps,
+  solved_with_skill=True; transcript rung2_20260728T204757.jsonl). Chain:
+  discover_offset → find_symbol main/win → calc delta → pwn_stdin
+  `p64({leak}-185)` → flag. What it took: quote-stripping in parse_steps
+  (7f111d4) + imperative-first pinned lesson 389 ("USE pwn_stdin, do NOT
+  write exploit scripts") + 3600s wall clock. Two prior failures: run A used
+  pwn_stdin 25× but fumbled syntax (quotes, Python in templates); run B
+  ignored the skill entirely (manual-script perfectionism, 32 steps lost to
+  RECON paralysis at 1800s). Variance across identical setups is HIGH —
+  single runs prove little; measure solve RATES.
 
 ## What this is
 
