@@ -222,7 +222,12 @@ def parse_steps(arg_tail: str):
     token). Shorthand: '<regex> <template...>' == expect+send; inside explicit
     mode 'expect:<regex> <template...>' nests the same shorthand, and that
     unlabeled send must be the final step. Bare 'hex8' flags ExploitGym's
-    8-byte-hex size prefix on the final send."""
+    8-byte-hex size prefix on the final send. Matched quote pairs wrapping
+    segments are stripped before tokenizing — models frequently shell-quote
+    the regex/template ('main:...' 'A*72 + ...'), and the quotes otherwise
+    become literal pattern text that can never match."""
+    arg_tail = re.sub(r"'([^']*)'", r"\1", arg_tail)
+    arg_tail = re.sub(r'"([^"]*)"', r"\1", arg_tail)
     tokens = arg_tail.split()
     hex8 = "hex8" in tokens
     tokens = [t for t in tokens if t != "hex8"]

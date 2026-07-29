@@ -133,6 +133,21 @@ def test_parse_steps_shorthand():
     assert hex8 is False
 
 
+def test_parse_steps_strips_shell_quotes():
+    # observed dialect (rung2 gate 2026-07-28): the model shell-quotes the
+    # regex and template segments — quotes must not become literal pattern text
+    steps, hex8, err = parse_steps(
+        r"'main:\s*0x([0-9a-f]+)' 'A*72 + p64({leak}-0xb9)'")
+    assert err is None, err
+    assert steps == [("expect", r"main:\s*0x([0-9a-f]+)"),
+                     ("send", "A*72 + p64({leak}-0xb9)")], steps
+    steps, hex8, err = parse_steps(
+        r'expect:"main:\s*(0x[0-9a-f]+)" send:"A*72" hex8')
+    assert err is None, err
+    assert steps == [("expect", r"main:\s*(0x[0-9a-f]+)"), ("send", "A*72")]
+    assert hex8 is True
+
+
 def test_parse_steps_explicit_with_hex8():
     steps, hex8, err = parse_steps(
         r"expect:Choice: send:1 expect:main:\s*(0x[0-9a-f]+) A*72 + p64({leak}-0xb9) hex8")
@@ -478,6 +493,7 @@ def main():
     test_toolbox_skill_dispatch()
     assert "discover_offset" in skill_docs() and "deliver_stdin" in skill_docs()
     test_parse_steps_shorthand()
+    test_parse_steps_strips_shell_quotes()
     test_parse_steps_explicit_with_hex8()
     test_parse_steps_errors()
     test_render_template_leaks()
