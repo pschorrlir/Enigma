@@ -422,7 +422,10 @@ class Engine:
                 if not verified:
                     why = ("your summary is a template echo, not a result"
                            if template_echo else
-                           "verification failed — the flag/result is not actually in place")
+                           "the flag/result is not actually in place. If you have already SEEN the "
+                           "flag in any tool output, your next call MUST be TOOL write: "
+                           "/workspace/flag.txt with the exact flag bytes — DONE is verified against "
+                           "that file, not against output you saw")
                     record = {"step": step, "action": "tool", "tool": "done_claim",
                               "thought": text[:done].strip()[:2000], "arg": "",
                               "result": f"[harness] DONE rejected: {why}. Continue working."}
@@ -488,16 +491,35 @@ class Engine:
                 else:
                     write_blocked = (call.name == "write" and target_path
                                      and unexecuted_writes.get(self.tools._in_box(target_path), 0) >= 5)
-                    if write_blocked:
-                        # Write-loop guard, ESCALATED to a hard block (v11b rewrote
-                        # send_payload.py 27× ignoring the soft note). Execution of
-                        # the path resets the counter and unblocks further writes.
-                        result = (
-                            f"[blocked by harness] WRITE NOT executed — you have rewritten "
-                            f"{target_path} {unexecuted_writes[self.tools._in_box(target_path)]} "
-                            "times without ever running it. RUN it now (e.g. python3 <path>) "
-                            "and debug the real error, or abandon this file and act on the "
-                            "target directly. Writes to this path stay blocked until you execute it.")
+                    # Filename-evasion guard: a new path resets the per-path
+                    # counter, so loops migrate filenames (v11b: send_payload.py
+                    # → generate_cyclic_alternative.py; rung4 gate: payload.bin
+                    # → generate scripts). Cap TOTAL unexecuted writes across
+                    # all paths — past it, block NEW paths until something runs.
+                    total_unrun = sum(unexecuted_writes.values())
+                    new_path_evasion = (
+                        call.name == "write" and target_path
+                        and self.tools._in_box(target_path) not in unexecuted_writes
+                        and total_unrun >= 8)
+                    if write_blocked or new_path_evasion:
+                        if new_path_evasion and not write_blocked:
+                            unrun = [p for p, n in unexecuted_writes.items() if n > 0]
+                            result = (
+                                f"[blocked by harness] WRITE NOT executed — you have {total_unrun} "
+                                f"unrun writes across {len(unrun)} files and keep starting NEW files "
+                                "instead of running any of them. RUN one now "
+                                f"({'; '.join(unrun[:3])}) and debug the real error, or act on the "
+                                "target directly. New files stay blocked until you execute something.")
+                        else:
+                            # Write-loop guard, ESCALATED to a hard block (v11b rewrote
+                            # send_payload.py 27× ignoring the soft note). Execution of
+                            # the path resets the counter and unblocks further writes.
+                            result = (
+                                f"[blocked by harness] WRITE NOT executed — you have rewritten "
+                                f"{target_path} {unexecuted_writes[self.tools._in_box(target_path)]} "
+                                "times without ever running it. RUN it now (e.g. python3 <path>) "
+                                "and debug the real error, or abandon this file and act on the "
+                                "target directly. Writes to this path stay blocked until you execute it.")
                     else:
                         result = await self.tools.run(call.name, call.arg)
                     exact_results[exact_key] = result
