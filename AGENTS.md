@@ -79,6 +79,18 @@ pruning: `.enigma/enigma.db.bak-*`.
   transcription after DONE-rejection). Delivery hygiene is the recurring
   failure: model gets the primitive, then loses to itself. Matrix:
   homework/out/ladder_20260728T232254.json.
+- **BAKE-OFF 2026-07-28/29 (rungs 2-3 ×2, 3600s, identical lessons):**
+  **32b 3/4 · 14b 2/4 · deepseek-coder-v2:16b 0/4.** 14b: rung2 solved in 12
+  steps (8 skills), rung3 solved unaided in 65 — genuinely close, faster
+  per-step, the LoRA candidate. Its other rung2 attempt printed the flag
+  25× and never wrote it (delivery-discipline failure). deepseek REJECTED:
+  path-blindness (ls /workspace/target loops), 23× malformed pwn_stdin
+  fixation, protocol instability (markdown-bold tool lines, unknown-tool
+  'call'). Matrices: ladder_20260729T024553.json (deepseek),
+  ladder_20260729T034636.json (14b). Winner per rule: 32b stays actor.
+  Lessons pruned: 410 (ln -s), 420 (radare2), 427/428/430 (payload-varying
+  superstition). Banked curated DELIVERY-DISCIPLINE lesson 432: flag in
+  output → VERY NEXT call is write /workspace/flag.txt.
 
 ## What this is
 
