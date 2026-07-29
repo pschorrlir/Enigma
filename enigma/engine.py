@@ -699,11 +699,12 @@ class Engine:
         local fallbacks (prev WM / default pivot) handle a cloud outage."""
         if critic.startswith("cloud:"):
             # Reasoning model: temperature is fixed at 1 (omit it), and
-            # reasoning tokens eat the budget — give it headroom beyond the
-            # visible-answer budget the caller asked for.
+            # reasoning tokens eat the budget. Keep headroom tight — the cloud
+            # critic steers the LOCAL actor, it is not the actor: num_predict
+            # for the visible answer + 2048 for reasoning, not more.
             return await self.kimi.generate(
                 critic[len("cloud:"):], prompt,
-                system=system, max_tokens=num_predict + 4096)
+                system=system, max_tokens=num_predict + 2048)
         out = await self.ollama.generate(
             critic, prompt, system=system,
             temperature=temperature, num_predict=num_predict)
