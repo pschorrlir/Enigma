@@ -72,6 +72,13 @@ pruning: `.enigma/enigma.db.bak-*`.
   ignored the skill entirely (manual-script perfectionism, 32 steps lost to
   RECON paralysis at 1800s). Variance across identical setups is HIGH —
   single runs prove little; measure solve RATES.
+- **Ladder 32b rungs 2-3 ×2 (2026-07-28 23:22): 3/4 solves.** rung2: solved
+  7 steps (skill) / exhausted 120 (54 skill calls — variance stall). rung3:
+  solved 67 (skill, 5× repeated the working leak before delivering) / solved
+  62 UNAIDED (0 skill calls, recovered from a self-scrambled flag
+  transcription after DONE-rejection). Delivery hygiene is the recurring
+  failure: model gets the primitive, then loses to itself. Matrix:
+  homework/out/ladder_20260728T232254.json.
 
 ## What this is
 
