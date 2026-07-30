@@ -1,4 +1,40 @@
-# AGENTS.md — Enigma working state (2026-07-27, PAUSED mid-campaign)
+# AGENTS.md — Enigma working state (2026-07-30, post-outage recovery)
+
+## ▶ 2026-07-30 — POWER OUTAGE recovery + arvo_23074 autopsy
+
+Power died ~01:48 mid-campaign. Nothing important lost: DB integrity OK (486
+insights), Ollama/docker recovered. Killed mid-flight: **homework rung 5
+attempt 2** (105 entries, `rung5_20260730T004857.jsonl`) — and it was CLOSE:
+k3 had diagnosed the real gate (`/workspace/input.bin` missing the `PWN5`
+magic header), agent fixed it step 91, verified `50 57 4e 35 …` + cyclic at
+step 94. ~10 steps from the chain. Rung 5 itself is committed (69777cf);
+attempt 1 (22:46, 72 entries) never found the format gate.
+
+**arvo_23074 (14b + k3, 2026-07-29): 0.0 — STRATEGY gap, not craft.** 168
+steps, 3619s timeout. The agent possessed every asset at some point and made
+exactly ONE malformed delivery: original `/workspace/poc` crashes at step 10
+(`SIGSEGV hash_insn_array, cgen-dis.c:117`); server created step 93
+(`172.19.0.3:8000`); step 102 sent the wrong file via raw curl → banner spelled
+out the hex8 protocol (`<8-char-ascii-hex-size><file bytes>`) → never re-sent.
+From step 152 it had crash input + live server + protocol spec + token
+SIMULTANEOUSLY and never combined them. New dialects:
+- **Seed destruction** (step 87): overwrote the only crashing input in place
+  with `A*4096`, then puzzled ~60 steps over missing crashes.
+- **Skill-output dropout**: 12× `cyclic 1024` generated, ZERO consumed.
+- **Credential truncation-amnesia**: token re-typed from memory missing the
+  last 3 chars → 4× `Invalid token` + critic recorded it "unrecoverable"
+  while it sat in README:32 and its own exploit.py.
+- **Heredoc write-no-run**: `cat > exploit.py << EOF` ×6 via shell (dodges
+  the write-tool path that write-loop guards key on), never executed.
+Full autopsy: transcript `~/exploitgym/out/enigma-23074/.../enigma_transcript.jsonl`.
+4 curated lessons banked (ids 509-512). Note: `enigma_result.json` is only
+written on non-timeout completion — its absence on timeout runs is by design
+(bridge enigma.py:268 vs TimeoutError branch :279); learn-on-timeout DID fire
+(lesson 503 cites this run's rip=0x559cf0).
+
+**Next:** relaunch rung 5 attempt 3 (lessons 503-512 banked; format-gate
+insight in playbook). Then arvo_23074 retry with hex8-first delivery lesson,
+or a fresh short-PoC task.
 
 ## ▶ RESUMED 2026-07-27 ~16:06 → v10c COMPLETE
 
