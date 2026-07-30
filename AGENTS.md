@@ -35,6 +35,23 @@ written on non-timeout completion — its absence on timeout runs is by design
 **Next:** arvo_23074 retry with hex8-first delivery lesson, or a fresh
 short-PoC task.
 
+**arvo_23074 attempt 4 (golden pins + PRM + notes, 2026-07-30): 0.0.**
+Golden pins partially landed: server created at step 10 (SERVER FIRST ✓),
+seed run FIRST with crash confirmed (exit 139 at step 18 ✓), server contact
+with cyclic pattern at step 21. Then: **step 23 `echo -n "00000400" >
+/workspace/poc` — seed destruction a THIRD time despite the GOLDEN pin in
+every prompt** (it understood the hex8 size header but wrote it INTO the
+seed file instead of onto the wire). Rest: discover_offset INCONCLUSIVE
+loops (never tried the literal word `argv` despite usage errors spelling it
+out — passed "A*4096", "hex:...", and PROSE as args instead), quoted
+payload specs rejected ×12, prose leaked into tool args ('bad prefix-hex
+This'), read-loop on description.txt ×15, `skill create_server` (unknown
+skill) ×4 instead of re-curling when the server expired. Verdict: pins
+change WHAT the agent attempts, not whether the 14b actor can comply at
+this task complexity. Fixes shipped: non-write tool args truncated at first
+newline; parse_payload strips surrounding quotes; INCONCLUSIVE now hints
+argv mode. **Next lever: 32b actor (AGENTS.md hard-task fallback).**
+
 **arvo_23074 attempt 3 (2026-07-30): 0.0 — REGRESSION, two root causes.**
 277 steps but loop-dominated: `discover_offset` INCONCLUSIVE ×15 (steps
 9-31), `cyclic 1024` ×15+ (103-125), `for`-after-`;` SyntaxError ×30

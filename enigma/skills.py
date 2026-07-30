@@ -48,7 +48,7 @@ def parse_payload(spec: str) -> bytes:
     agent."""
     out = b""
     for term in spec.split("+"):
-        term = term.strip()
+        term = term.strip().strip("'\"").strip()  # actor quotes whole specs: 'A*72 + p64(...)'
         if not term:
             continue
         m = re.fullmatch(r"(.)\s*\*\s*(\d+)", term)
@@ -127,7 +127,10 @@ async def _skill_discover_offset(cexec, args: str, spawn=None) -> str:
                     + (f"; includes {base}-byte prefix" if base else "") + ")")
     return ("offset discovery INCONCLUSIVE — gdb output:\n" + out[-800:] +
             f"\nfallback for -O0 layout (64-byte buf + saved rbp): "
-            f"{base + _FALLBACK_OFFSET}")
+            f"{base + _FALLBACK_OFFSET}"
+            + ("" if mode_argv else
+               "\nif the target reads a FILE (usage: <bin> <input-file>), retry "
+               "with argv mode: skill discover_offset <binary> argv"))
 
 
 async def _skill_find_symbol(cexec, args: str, spawn=None) -> str:

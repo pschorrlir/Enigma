@@ -75,6 +75,11 @@ def parse_tool_call(text: str) -> ToolCall | None:
     fence = re.match(r"^```[a-zA-Z0-9_+-]*\n(.*)\n```$", arg, re.DOTALL)
     if fence:
         arg = fence.group(1)
+    # Non-write tools take single-line args. The 14b actor appends prose after
+    # the command ("discover_offset /out/x\nThis will help me determine...") —
+    # arvo_23074 attempt 4 fed that prose to skill parsers as arguments.
+    if name != "write" and "\n" in arg:
+        arg = arg.split("\n", 1)[0].strip()
     return ToolCall(name, arg, m.start())
 
 
