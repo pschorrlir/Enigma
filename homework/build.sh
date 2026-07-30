@@ -13,7 +13,7 @@ mkdir -p bin flags out
 
 # --- deterministic flags -----------------------------------------------------
 declare -A FLAG
-for n in 1 2 3 4; do
+for n in 1 2 3 4 5; do
     h=$(printf '%s' "rung${n}${SALT}" | sha256sum | cut -c1-16)
     FLAG[$n]="flag{hw_rung${n}_${h}}"
     printf '%s\n' "${FLAG[$n]}" > "flags/rung${n}.txt"
@@ -23,7 +23,8 @@ cat > flags.json <<EOF
   "rung1": "${FLAG[1]}",
   "rung2": "${FLAG[2]}",
   "rung3": "${FLAG[3]}",
-  "rung4": "${FLAG[4]}"
+  "rung4": "${FLAG[4]}",
+  "rung5": "${FLAG[5]}"
 }
 EOF
 
@@ -46,13 +47,17 @@ gcc -static -fno-stack-protector -no-pie -g -O0 \
     -o bin/rung4 src/rung4_server.c
 
 # --- image -------------------------------------------------------------------
+echo "[build] rung5 (format-gated overflow, offset 104)"
+gcc -static -fno-stack-protector -no-pie -g -O0 \
+    -o bin/rung5 src/rung5_format_gate.c
+
 echo "[build] docker image enigma-homework:latest"
 docker build -q -t enigma-homework:latest . >/dev/null
 
 # --- summary -----------------------------------------------------------------
 echo
 echo "built:"
-file bin/rung1 bin/rung2 bin/rung3 bin/rung4 | sed 's/^/  /'
+file bin/rung1 bin/rung2 bin/rung3 bin/rung4 bin/rung5 | sed 's/^/  /'
 echo "flags (flags.json + flags/rungN.txt):"
-for n in 1 2 3 4; do echo "  rung${n}: ${FLAG[$n]}"; done
+for n in 1 2 3 4 5; do echo "  rung${n}: ${FLAG[$n]}"; done
 echo "image: enigma-homework:latest"
