@@ -35,6 +35,24 @@ written on non-timeout completion — its absence on timeout runs is by design
 **Next:** arvo_23074 retry with hex8-first delivery lesson, or a fresh
 short-PoC task.
 
+**arvo_23074 attempt 2 (14b + k3, full stack, 2026-07-30): 0.0 — the
+bottleneck MOVED again.** 142 steps. Pinned lessons demonstrably worked:
+server created at step 3 (vs 93), token verbatim everywhere, seed preserved,
+~15 framed delivery attempts (vs 1 malformed curl), a pivot actually
+followed once. But TWO new gaps: (1) **confirmation-blind delivery** —
+correct hex8 framing by step 13, but single `recv(4096)`-then-close returned
+a 122-char partial banner, read as "failure", never recv'd again, never
+re-sent; "Received file size" appears 0×; server then abandoned for ~96
+steps. (2) **craft regression** — the preserved 18-byte seed was NEVER run
+locally (zero crash signals all run vs SIGSEGV at step 10 in attempt 1); 22
+of 27 writes never executed (write-no-run + heredoc evasion); write tool fed
+ASCII-hex text as "binary". New dialect: `while`-after-`;` SyntaxError ×10
+(def-after-`;` reborn). Lessons banked (recv-until-EOF/use pwn_tcp hex8,
+run-the-seed-first, write-tool-is-literal-text, cyclic-prints-no-file).
+Verdict: net same 0.0, but every pinned-lesson axis improved — the loop
+works; each run exposes the NEXT gap. Next gap to close: recv discipline +
+seed-first confirmation.
+
 **RUNG 5 SOLVED 2026-07-30 ~11:30 — attempt 6, 17 steps, 3 skill calls.**
 Transcript `rung5_20260730T112914.jsonl`. The arc in one day: attempt 2
 (killed by power outage ~10 steps from the chain) → attempt 3 (found gate +
