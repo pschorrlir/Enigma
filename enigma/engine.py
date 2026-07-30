@@ -262,11 +262,18 @@ class Engine:
         # failure with its fix lesson sitting unrecalled in the playbook, and
         # _agent_prompt only keeps the first N of this list.
         recent_rows = self.store.recent_lesson_rows("agent", 4)
-        insights = [l for _, l in recent_rows]
+        # GOLDEN pins first: curated strategic lessons that must survive batch
+        # rotation (server-first, seed-preservation, delivery-discipline...).
+        golden_rows = self.store.golden_lesson_rows("agent")
+        insights = [l for _, l in golden_rows]
+        for _, l in recent_rows:
+            if l not in insights:
+                insights.append(l)
+        head_len = len(insights)  # golden + recency head, preserved on rebuild
         # Remember which lessons were injected so learn_from_agent_run can credit
         # or blame them (closes the ACE loop for agent runs — without this, agent
         # lessons sit at helpful=0/harmful=0 forever and can never be pruned).
-        recalled_insight_ids = [i for i, _ in recent_rows]
+        recalled_insight_ids = [i for i, _ in golden_rows] + [i for i, _ in recent_rows]
         for iid, l in self.store.recall(objective, emb, cfg.recall_top_k, kind="agent"):
             if l not in insights:
                 insights.append(l)
@@ -662,9 +669,9 @@ class Engine:
                     rows = self.store.recall(working_memory, wm_emb, 3, kind="agent")
                     new_lessons = [l for _, l in rows if l not in insights]
                     if new_lessons:
-                        # Keep the 4 pinned recency lessons first, insert the
-                        # situation-recalled ones right behind them.
-                        insights = insights[:4] + new_lessons + insights[4:]
+                        # Keep the pinned head (GOLDEN + recency-4) first, insert
+                        # the situation-recalled ones right behind it.
+                        insights = insights[:head_len] + new_lessons + insights[head_len:]
                         recalled_insight_ids.extend(i for i, _ in rows)
                         head = self._agent_prompt(objective, insights, reflections, cases)
                 except Exception:
@@ -875,7 +882,7 @@ ahead, and do not re-enter a phase whose criterion is already met:
         if reflections:
             parts.append("PRINCIPLES YOU'VE DISTILLED (apply if relevant):\n- " + "\n- ".join(reflections[:5]))
         if insights:
-            parts.append("RELEVANT LESSONS:\n- " + "\n- ".join(insights[:8]))
+            parts.append("RELEVANT LESSONS:\n- " + "\n- ".join(insights[:12]))
         parts.append("Begin. Take the first concrete step now — call a TOOL to observe the environment.")
         return "\n\n".join(parts)
 

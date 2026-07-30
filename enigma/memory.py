@@ -337,6 +337,17 @@ class Store:
             (kind, k)).fetchall()
         return [(r["id"], r["lesson"] or "") for r in rows]
 
+    def golden_lesson_rows(self, kind: str) -> list[tuple[int, str]]:
+        """Curated ALWAYS-pinned strategic lessons, marked by a 'GOLDEN:' prefix
+        in the lesson text (no schema change). Pinned ahead of the recency-4 in
+        every agent head: arvo_23074 attempts 2→3 showed newest-4 pinning gives
+        lessons a one-batch shelf life — each autopsy banks ~4 new lessons and
+        evicts the previous batch from the prompt."""
+        rows = self._db.execute(
+            "SELECT id, lesson FROM insights WHERE kind=? AND lesson LIKE 'GOLDEN:%' "
+            "ORDER BY id DESC", (kind,)).fetchall()
+        return [(r["id"], r["lesson"] or "") for r in rows]
+
     def recall(self, query: str, query_emb: list[float] | None, top_k: int,
                kind: str | None = None) -> list[tuple[int, str]]:
         """Top insights as (id, lesson). Embedded and non-embedded rows are ranked

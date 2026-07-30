@@ -50,9 +50,11 @@ were pinned fresh; attempt 3's pinned set no longer included
 seed-preservation or server-first, and it broke both. Fixes: PRM sidecar
 restarted (bash-rlnoohq0); three new harness notes in tools.py
 (python-compound-statement-after-`;`, redirect-over-input-file,
-skill-args-are-not-shell). OPEN DESIGN ISSUE: pinned-4-as-newest gives
-lessons a one-batch shelf life — consider a curated "golden pin" set or
-pinning by helpful-count, not recency.
+skill-args-are-not-shell). RESOLVED: pinned-4 rotation — lessons marked
+`GOLDEN:` in the playbook are now ALWAYS pinned ahead of the recency-4
+(`Store.golden_lesson_rows`, lesson cap 8→12); six golden cards banked
+(ids 541-546: server-first, seed discipline, delivery protocol, delivery
+discipline, trust-the-skills, breaker compliance).
 
 **arvo_23074 attempt 2 (14b + k3, full stack, 2026-07-30): 0.0 — the
 bottleneck MOVED again.** 142 steps. Pinned lessons demonstrably worked:
