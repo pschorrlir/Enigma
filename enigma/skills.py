@@ -42,8 +42,10 @@ def parse_payload(spec: str) -> bytes:
     """Parse a payload spec like 'A*72 + p64(0x4011d6)' into bytes.
 
     Terms separated by '+': '<char>*<count>' repeats, 'p32(0xADDR)' / 'p64(0xADDR)'
-    little-endian packed addresses (hex or decimal). Raises ValueError on anything
-    else so the caller can hand the message back to the agent."""
+    little-endian packed addresses (hex or decimal), 'hex:DEADBEEF' raw bytes
+    (format-gate magics, e.g. hex:50574e3500000000 = 'PWN5' + 4 pad). Raises
+    ValueError on anything else so the caller can hand the message back to the
+    agent."""
     out = b""
     for term in spec.split("+"):
         term = term.strip()
@@ -58,7 +60,11 @@ def parse_payload(spec: str) -> bytes:
             fmt = "<I" if m.group(1) == "32" else "<Q"
             out += struct.pack(fmt, int(m.group(2), 0))
             continue
-        raise ValueError(f"unparseable term {term!r} (want X*N or p64(0xADDR))")
+        m = re.fullmatch(r"hex:([0-9a-fA-F]+)", term)
+        if m:
+            out += bytes.fromhex(m.group(1))
+            continue
+        raise ValueError(f"unparseable term {term!r} (want X*N, p64(0xADDR), or hex:...)")
     if not out:
         raise ValueError("empty payload spec")
     return out
@@ -182,6 +188,23 @@ async def _skill_deliver_stdin(cexec, args: str, spawn=None) -> str:
         return f"bad payload spec: {e}"
     code, out = await cexec(binary, input_bytes=payload, timeout=30)
     return f"[sent {len(payload)} bytes on stdin, exit {code}]\n{out.rstrip()}"
+
+
+async def _skill_deliver_argv(cexec, args: str, spawn=None) -> str:
+    binary, _, spec = args.strip().partition(" ")
+    if not binary or not spec.strip():
+        return ("usage: skill deliver_argv <binary> <spec>  — write the payload to "
+                "a file and run `<binary> <file>` (targets that read argv[1], not "
+                "stdin). e.g. skill deliver_argv /target/rung5 "
+                "hex:50574e3500000000 + A*104 + p64(0x401955)")
+    try:
+        payload = parse_payload(spec)
+    except ValueError as e:
+        return f"bad payload spec: {e}"
+    await cexec("bash", "-c", "cat > /tmp/payload.bin", input_bytes=payload)
+    code, out = await cexec(binary, "/tmp/payload.bin", timeout=30)
+    return (f"[wrote {len(payload)} bytes to /tmp/payload.bin, ran "
+            f"{binary} /tmp/payload.bin, exit {code}]\n{out.rstrip()}")
 
 
 # ---- interactive step engine (pwn_stdin / pwn_tcp) ----------------------------
@@ -515,6 +538,11 @@ SKILLS = {
     "deliver_stdin": ("deliver_stdin <binary> <spec> — run the target with a payload "
                       "on stdin; spec e.g. 'A*72 + p64(0x4011d6)'; returns its output",
                       _skill_deliver_stdin),
+    "deliver_argv": ("deliver_argv <binary> <spec> — write payload to a file and run "
+                     "`<binary> <file>` (targets that read argv[1], not stdin). spec "
+                     "terms: X*N, p64(0xADDR), hex:DEADBEEF (format-gate magics). e.g. "
+                     "hex:50574e3500000000 + A*104 + p64(0x401955)",
+                     _skill_deliver_argv),
     "pwn_stdin": ("pwn_stdin <binary> <steps> — INTERACTIVE: leak and deliver in "
                   "ONE process (required under ASLR/PIE). Steps: expect:<regex> "
                   "send:<template>, or shorthand '<regex> <template>'. {leak}, "
