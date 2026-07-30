@@ -6,3 +6,6 @@ __pycache__/
 *.egg-info/
 build/
 .venv/
+homework/bin/
+homework/out/
+logs/
