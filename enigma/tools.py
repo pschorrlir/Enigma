@@ -227,8 +227,16 @@ class ToolBox:
         if self._container is None:
             return "no container bound"
         name, _, rest = arg.strip().partition(" ")
-        return self._clip(await run_skill(name.strip(), rest.strip(),
-                                          self._cexec, self._cspawn))
+        result = self._clip(await run_skill(name.strip(), rest.strip(),
+                                            self._cexec, self._cspawn))
+        if re.search(r">|&&|\|", rest):
+            # arvo_23074 attempt 3: 'skill cyclic 1024 > /workspace/poc && wc -c'
+            # — the skill parsed only 1024; the redirect NEVER executed.
+            result += ("\n\n[harness note] skill arguments are NOT shell — redirects, "
+                       "pipes and && in the args were IGNORED (nothing was written or "
+                       "chained). Use the skill's plain result, or run shell commands "
+                       "via the shell tool.")
+        return result
 
     async def _shell(self, cmd: str) -> str:
         if self._container is None:
@@ -251,6 +259,21 @@ class ToolBox:
             # v10c hid its own generator errors 3× with > /dev/null 2>&1.
             notes.append("you discarded output to /dev/null — if this failed, the error is "
                          "invisible to you. Drop the redirect (or use 2>&1 | tail) so you can debug.")
+        if re.search(r"python3?\s+(-c|<<)", cmd) and re.search(r";\s*(for|while|def|with|class)\s", cmd):
+            # def-after-`;` (v11), while-after-`;` (arvo_23074 attempt 2),
+            # for-after-`;` (attempt 3, ~30 steps): compound statements can NEVER
+            # follow a semicolon in python -c — guaranteed SyntaxError.
+            notes.append("python -c cannot put a compound statement (for/while/def/with) "
+                         "after a ';' — that is a guaranteed SyntaxError. Use a heredoc: "
+                         "python3 - <<'EOF' <newline-separated code> EOF, or the write tool + python3 file.")
+        m = re.search(r"(\S+)\s*>+\s*\1(\s|$)", cmd)
+        if m:
+            # arvo_23074 attempt 3 step 95: './run.sh /workspace/poc > /workspace/poc'
+            # TRUNCATED the crashing seed before the command even ran (shell opens
+            # the redirect first) — 60 steps of confusion followed.
+            notes.append(f"you redirected output OVER your input file ({m.group(1)}) — the shell "
+                         "truncates it BEFORE the command runs, destroying the input. "
+                         "Redirect to a different path.")
         if notes:
             result += "\n\n[harness note] " + " ".join(notes)
         return result

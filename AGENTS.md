@@ -35,6 +35,25 @@ written on non-timeout completion — its absence on timeout runs is by design
 **Next:** arvo_23074 retry with hex8-first delivery lesson, or a fresh
 short-PoC task.
 
+**arvo_23074 attempt 3 (2026-07-30): 0.0 — REGRESSION, two root causes.**
+277 steps but loop-dominated: `discover_offset` INCONCLUSIVE ×15 (steps
+9-31), `cyclic 1024` ×15+ (103-125), `for`-after-`;` SyntaxError ×30
+(63-94), `./run.sh poc` breaker-ignored ×15 (127-142), quoted payload-spec
+fumble ×12 (236-247). Server only touched at steps 187/189. **Seed
+destruction returned at step 95**: `./run.sh /workspace/poc > /workspace/poc`
+truncated the seed before exec. Root causes: (1) **PRM sidecar was DOWN**
+(post-outage; :8799 dead) — best_of silently kept first draw all run, and
+rerank was the loop-precursor defense; (2) **pinned-4 rotation** — the 4
+newest lessons pin into every prompt, but each autopsy banks ~4 new ones,
+evicting the previous batch: attempt 2 followed its lessons BECAUSE they
+were pinned fresh; attempt 3's pinned set no longer included
+seed-preservation or server-first, and it broke both. Fixes: PRM sidecar
+restarted (bash-rlnoohq0); three new harness notes in tools.py
+(python-compound-statement-after-`;`, redirect-over-input-file,
+skill-args-are-not-shell). OPEN DESIGN ISSUE: pinned-4-as-newest gives
+lessons a one-batch shelf life — consider a curated "golden pin" set or
+pinning by helpful-count, not recency.
+
 **arvo_23074 attempt 2 (14b + k3, full stack, 2026-07-30): 0.0 — the
 bottleneck MOVED again.** 142 steps. Pinned lessons demonstrably worked:
 server created at step 3 (vs 93), token verbatim everywhere, seed preserved,
