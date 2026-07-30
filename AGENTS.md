@@ -32,9 +32,30 @@ written on non-timeout completion — its absence on timeout runs is by design
 (bridge enigma.py:268 vs TimeoutError branch :279); learn-on-timeout DID fire
 (lesson 503 cites this run's rip=0x559cf0).
 
-**Next:** relaunch rung 5 attempt 3 (lessons 503-512 banked; format-gate
-insight in playbook). Then arvo_23074 retry with hex8-first delivery lesson,
-or a fresh short-PoC task.
+**Next:** arvo_23074 retry with hex8-first delivery lesson, or a fresh
+short-PoC task.
+
+**RUNG 5 SOLVED 2026-07-30 ~11:30 — attempt 6, 17 steps, 3 skill calls.**
+Transcript `rung5_20260730T112914.jsonl`. The arc in one day: attempt 2
+(killed by power outage ~10 steps from the chain) → attempt 3 (found gate +
+crash + win, killed by TWO harness bugs: cyclic_find searched hex literally
+but gdb RIPs are little-endian — fixed with byte-reversed fallback;
+discover_offset was stdin-only but rung5 reads argv[1] behind the PWN5 gate —
+fixed with argv/prefix-hex modes, commit 918c1ef) → attempt 4 (skills worked:
+win+offset by step 6, then CANARY SUPERSTITION from nm __stack_chk_fail +
+no argv-capable delivery skill — added deliver_argv + hex: payload terms,
+commit da3bd31, e2e-verified it prints the real flag) → attempt 5 (model
+hand-rolled a WRONG offset 92 from gdb bt instead of trusting
+discover_offset's 112, took win=0x401999 from an objdump grep vs
+find_symbol's 0x401955, used `$(skill ...)` as shell substitution) → banked
+a 3-call PROCEDURE CARD lesson (find_symbol → discover_offset argv+prefix →
+deliver_argv; "TRUST the skill" warnings; newest-4 lessons are pinned into
+every step's prompt) → **attempt 6: steps 13-15 were EXACTLY the card, flag
+printed, flag.txt written step 17, solved**. Note: done_claim at step 16 was
+correctly REJECTED (flag not yet on disk) — verified-DONE keeps proving
+itself. Lesson: at the capability frontier the loop is fix-harness →
+fix-craft-dialect → pin-procedure, and single runs remain high-variance —
+keep measuring solve RATES.
 
 ## ▶ RESUMED 2026-07-27 ~16:06 → v10c COMPLETE
 
