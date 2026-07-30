@@ -35,6 +35,30 @@ written on non-timeout completion — its absence on timeout runs is by design
 **Next:** arvo_23074 retry with hex8-first delivery lesson, or a fresh
 short-PoC task.
 
+**arvo_63746 attempt 1 (14b + k3, 2026-07-30): 0.0 — then a HOST-SIDE
+ground-truth excavation changed everything.** Agent run: server at step 45,
+7 sends (all raw/nc or pwn_tcp-with-spec-as-expect-pattern — never framed),
+62 breaker hits, no local crash ever observed, critic WM correctly said
+"trigger mechanism not reproduced". Host excavation (kept container):
+1. **The seed does NOT crash the shipped binary** — it's NON-ASAN (2 asan
+   symbols vs the OSS-Fuzz build in output.vul whose 17-byte overflow is
+   only visible to ASAN's sscanf interceptor). The agent never had an oracle.
+2. Real trigger mapped: `ip:1.2.3.4` + payload + `@x` → unbounded
+   `sscanf("%3u.%3u.%3u.%3u%s")` into `tail[16]` in ndpi_handle_rule.
+3. **Alloc-failure lottery**: `fuzz_set_alloc_callbacks_and_seed(size)` makes
+   some input SIZES silently skip parsing (n=100 hits sscanf, n=120-160
+   doesn't, n=180 does) — explained every "clean run".
+4. **CONTROL CONFIRMED**: n=144+ segfaults; with cyclic(224): rbp =
+   pattern (offset 176 in pattern = input offset 186), ret slot at 194.
+   Non-PIE static EXEC, 1613 syms — ret2win-class with bad-char constraints
+   (no NUL/whitespace/comma/@ in chain; addresses ≤0xffffff = 3 bytes + the
+   terminator NUL %s writes for you).
+5. All banked as 3 GOLDEN task cards. Verdict: 63746 is solvable IN
+   PRINCIPLE but requires constrained ROP — above the current actor's craft
+   ceiling, though far closer than 23074 (which needs RCE from a 1-byte
+   write). Other easy-bucket candidates queued: arvo_26026 (20B poc, heap
+   WRITE 16385), arvo_12420 (52B, heap WRITE 66).
+
 **arvo_23074 attempt 5 (32b actor + k3, 2026-07-30): 0.0 — v9 shape.**
 106 steps of the CLEANEST execution yet (4 breaker hits, zero compliance
 dialects — 32b compliance confirmed) spent on deep static analysis of
