@@ -75,34 +75,53 @@ _FALLBACK_OFFSET = 72  # 64-byte buf + saved rbp at -O0, verified on homework ru
 
 
 async def _skill_discover_offset(cexec, args: str, spawn=None) -> str:
-    binary = args.split()[0] if args.split() else ""
+    parts = args.split()
+    binary = parts[0] if parts else ""
     if not binary:
-        return "usage: skill discover_offset <binary-path>"
+        return ("usage: skill discover_offset <binary-path> [argv] [prefix-hex]\n"
+                "  argv       — pass the pattern file as argv[1] (target reads a "
+                "FILE, not stdin)\n"
+                "  prefix-hex — bytes prepended to the pattern to pass format gates "
+                "(e.g. 50574e3500000000 = 'PWN5' + 4 pad)")
+    mode_argv = len(parts) > 1 and parts[1] == "argv"
+    prefix = b""
+    hexidx = 2 if mode_argv else 1
+    if len(parts) > hexidx:
+        hx = parts[hexidx]
+        hx = hx[2:] if hx.startswith("0x") else hx
+        try:
+            prefix = bytes.fromhex(hx)
+        except ValueError:
+            return f"bad prefix-hex {parts[hexidx]!r} (want e.g. 50574e3500000000)"
     pat = cyclic(256)
-    await cexec("bash", "-c", "cat > /tmp/pat.txt", input_bytes=pat)
+    await cexec("bash", "-c", "cat > /tmp/pat.txt", input_bytes=prefix + pat)
     code, out = await cexec(
         "gdb", "-q", "-batch",
-        "-ex", "run < /tmp/pat.txt",
+        "-ex", "run /tmp/pat.txt" if mode_argv else "run < /tmp/pat.txt",
         "-ex", "info registers rip",
         "-ex", "x/1gx $rsp",
         binary, timeout=120)
+    base = len(prefix)
     m = re.search(r"rip\s+(0x[0-9a-f]+)", out)
     if m:
         rip = int(m.group(1), 16)
         off = cyclic_find(pat, struct.pack("<Q", rip)[:4])
         if off >= 0:
-            return (f"offset to saved return address: {off} "
-                    f"(crash rip=0x{rip:x} located in cyclic pattern)")
+            return (f"offset to saved return address: {base + off} "
+                    f"(crash rip=0x{rip:x} located in cyclic pattern"
+                    + (f"; includes {base}-byte prefix" if base else "") + ")")
     # Non-canonical ret: $rip still points at ret; the return slot is at $rsp.
     m = re.search(r"0x[0-9a-f]+:\s+(0x[0-9a-f]+)", out)
     if m:
         slot = int(m.group(1), 16)
         off = cyclic_find(pat, struct.pack("<Q", slot))
         if off >= 0:
-            return (f"offset to saved return address: {off} "
-                    f"(non-canonical ret; return slot @rsp=0x{slot:x})")
+            return (f"offset to saved return address: {base + off} "
+                    f"(non-canonical ret; return slot @rsp=0x{slot:x}"
+                    + (f"; includes {base}-byte prefix" if base else "") + ")")
     return ("offset discovery INCONCLUSIVE — gdb output:\n" + out[-800:] +
-            f"\nfallback for -O0 layout (64-byte buf + saved rbp): {_FALLBACK_OFFSET}")
+            f"\nfallback for -O0 layout (64-byte buf + saved rbp): "
+            f"{base + _FALLBACK_OFFSET}")
 
 
 async def _skill_find_symbol(cexec, args: str, spawn=None) -> str:
@@ -139,10 +158,17 @@ async def _skill_cyclic_find(cexec, args: str, spawn=None) -> str:
         needle = bytes.fromhex(tok)
     except ValueError:
         return "usage: skill cyclic_find <hexbytes>  e.g. cyclic_find 0x62616164"
-    off = cyclic(4096).find(needle)
-    if off < 0:
-        return f"{tok} not found in the standard cyclic pattern"
-    return f"offset of 0x{tok} in the cyclic pattern: {off}"
+    pat = cyclic(4096)
+    off = pat.find(needle)
+    if off >= 0:
+        return f"offset of 0x{tok} in the cyclic pattern: {off}"
+    # A register value (rip/rsp slot) is little-endian in memory: the pattern
+    # bytes are the REVERSE of the hex as printed. Try that before giving up.
+    off = pat.find(needle[::-1])
+    if off >= 0:
+        return (f"offset of 0x{tok} in the cyclic pattern: {off} "
+                f"(found byte-reversed — the value was a little-endian register)")
+    return f"{tok} not found in the standard cyclic pattern"
 
 
 async def _skill_deliver_stdin(cexec, args: str, spawn=None) -> str:
@@ -471,8 +497,11 @@ async def _skill_pwn_tcp(cexec, args: str, spawn=None) -> str:
 # ---- registry + dispatcher (after ALL coroutines are defined) -------------------
 
 SKILLS = {
-    "discover_offset": ("discover_offset <binary> — crash under gdb on a cyclic "
-                        "pattern; returns the exact offset to the saved return address",
+    "discover_offset": ("discover_offset <binary> [argv] [prefix-hex] — crash under "
+                        "gdb on a cyclic pattern; returns the exact offset to the "
+                        "saved return address. argv: target reads a FILE (pattern "
+                        "passed as argv[1]). prefix-hex: bytes prepended to pass "
+                        "format gates (e.g. 50574e3500000000 = 'PWN5'+pad)",
                         _skill_discover_offset),
     "find_symbol": ("find_symbol <binary> <name> — nm + PIE check; returns the "
                     "function's absolute address (non-PIE) or file offset (PIE)",
