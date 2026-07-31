@@ -70,6 +70,14 @@ class Config:
     # and let the PRM pick. The correct action is usually IN the distribution a
     # few draws late — reranking finds it on step 1. 1 = off.
     agent_best_of: int = field(default_factory=lambda: _env_int("ENIGMA_AGENT_BEST_OF", 3))
+    # Dupwatch seat: a small model watching every N steps for SEMANTIC
+    # repetition the skeleton breakers can't see (different args, same intent —
+    # cyclic 256 vs 512, re-reading three files for one fact). Its verdict
+    # feeds the pinned strategy-redirection channel. 0 disables.
+    agent_dupwatch_every: int = field(default_factory=lambda: _env_int("ENIGMA_AGENT_DUPWATCH_EVERY", 3))
+    # Empty = utility_model = local_models[0]. Wants FAST and literal
+    # (llama3.1:8b class) — it answers one YES/NO line, not a critique.
+    agent_dupwatch_model: str = field(default_factory=lambda: _env("ENIGMA_AGENT_DUPWATCH_MODEL", ""))
     # PRM sidecar (sidecar/prm_server.py) for step-level candidate scoring.
     prm_url: str = field(default_factory=lambda: _env("ENIGMA_PRM_URL", "http://127.0.0.1:8799"))
     # The entity's persona — colors generation/self-narration (director, ideation,

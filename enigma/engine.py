@@ -639,6 +639,22 @@ class Engine:
                     f"(step {step}) {thought[:600]}\n"
                     f"TOOL {call.name}: {call.arg[:400]}\n"
                     f"TOOL RESULT [{call.name}]:\n{result[:1200]}")
+                # Dupwatch seat (small model): semantic loop detection feeding
+                # the SAME pinned-redirection channel as the strategy pivot,
+                # so the redirect persists until the result signature changes.
+                # Skipped while a pivot is already pinned (advice in flight).
+                if (cfg.agent_dupwatch_every > 0 and not active_pivot
+                        and step % cfg.agent_dupwatch_every == 0 and len(scroll) >= 4):
+                    try:
+                        verdict = await self._dupwatch(scroll)
+                    except LLMError:
+                        verdict = None
+                    if verdict:
+                        active_pivot = verdict
+                        pivot_sig = last_dyn_sig
+                        drec = {"step": step, "action": "dupwatch", "verdict": verdict}
+                        transcript.append(drec)
+                        self._emit_step(drec, on_step)
             transcript.append(record)
             self._emit_step(record, on_step)
             if done_check is not None:
@@ -835,6 +851,41 @@ class Engine:
             return ("Stop repeating the current approach. Pick a different primitive or angle "
                     "(e.g. information leak instead of crash-hunting) and test it directly.")
         return text.strip()[:600]
+
+    async def _dupwatch(self, scroll: list[str]) -> str | None:
+        """Small-model seat: catch SEMANTIC repetition the skeleton breakers
+        can't (different args, same intent — cyclic 256 vs 512, re-reading
+        three files for one fact). The breakers warn ("you ran this N times")
+        and the actor has learned to ignore warning text; a watchtower that
+        NAMES the loop and ORDERS a concrete redirect converts detection into
+        instruction. Returns the redirect text, or None when the agent is
+        progressing. Runs on the utility model — one YES/NO line, ~1s."""
+        model = (self.cfg.agent_dupwatch_model or self.cfg.utility_model
+                 or self.cfg.local_models[0])
+        recent = "\n".join("%d. %s" % (i + 1, s[:350].replace("\n", " "))
+                           for i, s in enumerate(scroll[-6:]))
+        prompt = (
+            "You are watching an autonomous agent's last actions for REPETITION.\n\n"
+            + recent +
+            "\n\nIf the agent repeated an action whose result it already had, or is "
+            "circling the same target with no new information, reply with one line:\n"
+            "YES: <one short sentence naming the repeated TOOL and its argument, then "
+            "the concrete different next step — e.g. 'YES: stop calling cyclic; write "
+            "the pattern from step 13's result into your payload file and run the target'>\n"
+            "If it is making progress (new information each step), reply exactly: NO"
+        )
+        out = await self.ollama.generate(
+            model, prompt,
+            system="You are a strict loop detector. One line only.",
+            temperature=0.0, num_predict=90)
+        text = out.text.strip()
+        if text.upper().startswith("YES"):
+            _, _, redirect = text.partition(":")
+            redirect = redirect.strip().splitlines()[0] if redirect.strip() else ""
+            return (redirect[:300] or
+                    "You are repeating an action that already gave you its result — "
+                    "pick a categorically different next action.")
+        return None
 
     def _agent_system(self, persona: str) -> str:
         base = (persona + "\n\n") if persona else ""
