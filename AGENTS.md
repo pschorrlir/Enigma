@@ -390,6 +390,15 @@ container via `docker exec`, scored on writing the real flag to `/workspace/flag
     candidates and the PRM sidecar (Qwen2.5-Math-PRM-7B, CPU, :8799) picks the
     best. The correct action is usually IN the distribution 2-4 draws late;
     reranking finds it on step 1. PRM down → silently keeps first draw.
+14. **Dupwatch seat (ENIGMA_AGENT_DUPWATCH_EVERY, default 3)** — the utility
+    model (llama3.1:8b) reviews the last 6 scroll entries for SEMANTIC
+    repetition the skeleton breakers can't see (different args, same intent).
+    On YES its one-line redirect feeds the same pinned STANDING STRATEGY
+    REDIRECTION channel as the pivot — detection converted into instruction
+    (rung6 attempt 1: `cyclic 256` ×17 through escalating breaker text).
+15. **GOLDEN pins** — lessons prefixed `GOLDEN:` are always pinned ahead of the
+    recency-4 in every head (arvo attempts 2→3: recency pinning gives lessons
+    a one-batch shelf life).
 
 ## Learning loop (post-v10c fixes)
 
