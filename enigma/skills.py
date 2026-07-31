@@ -210,6 +210,60 @@ async def _skill_deliver_argv(cexec, args: str, spawn=None) -> str:
             f"{binary} /tmp/payload.bin, exit {code}]\n{out.rstrip()}")
 
 
+async def _skill_find_magic(cexec, args: str, spawn=None) -> str:
+    parts = args.split()
+    binary = parts[0] if parts else ""
+    if not binary:
+        return ("usage: skill find_magic <binary-path> [argv]  — brute-verifies the "
+                "format-gate magic: runs the binary with garbage to learn the "
+                "rejection text, then tests short uppercase strings from the binary "
+                "as candidate prefixes. argv: target reads a FILE, not stdin.")
+    mode_argv = len(parts) > 1 and parts[1] == "argv"
+
+    async def run_with(data: bytes):
+        if mode_argv:
+            await cexec("bash", "-c", "cat > /tmp/fm_in.bin", input_bytes=data)
+            return await cexec(binary, "/tmp/fm_in.bin", timeout=15)
+        return await cexec(binary, input_bytes=data, timeout=15)
+
+    # 1. Baseline: what does rejection look like?
+    _, baseline = await run_with(b"ZZZZZZZZZZZZZZZZ")
+    # 2. Candidates: short uppercase/digit tokens, sorted by rodata proximity to
+    # the rejection string (strings -t x lists in address order; the magic lives
+    # next to its own gate message).
+    _, souts = await cexec("strings", "-t", "x", binary)
+    entries = []  # (offset, token)
+    for line in souts.splitlines():
+        m = re.match(r"\s*([0-9a-f]+)\s+(\S.*)", line)
+        if not m:
+            continue
+        off, tok = int(m.group(1), 16), m.group(2).strip()
+        entries.append((off, tok))
+    rej_off = None
+    for off, tok in entries:
+        if "bad magic" in tok.lower() or "invalid" in tok.lower():
+            rej_off = off
+            break
+    cands = {}
+    for off, tok in entries:
+        if re.fullmatch(r"[A-Z][A-Z0-9_]{2,7}", tok):
+            cands.setdefault(tok, off)
+    ordered = sorted(cands.items(),
+                     key=lambda kv: abs(kv[1] - rej_off) if rej_off else kv[1])
+    # 3. Verify: a prefix whose run DIFFERS from the baseline rejection passes
+    # the gate. Cap the sweep — each test is one process spawn.
+    for tok, _off in ordered[:40]:
+        _, out = await run_with(tok.encode() + b"A" * 16)
+        if out.strip() != baseline.strip():
+            hx = tok.encode().hex()
+            return (f"magic = '{tok}' (hex {hx}) — VERIFIED: input starting with "
+                    f"it passes the format gate (baseline rejection was: "
+                    f"{baseline.strip()[:80]!r}; with this prefix: {out.strip()[:80]!r})")
+    return ("no magic found among %d candidates (baseline rejection: %r). The gate "
+            "may need a longer/exact line — read the parser source near the "
+            "rejection string." % (len(ordered), baseline.strip()[:120]))
+
+
 # ---- interactive step engine (pwn_stdin / pwn_tcp) ----------------------------
 # Leak-and-deliver in ONE session: expect a banner, bind the leak, deliver the
 # payload — the only shape that works under ASLR (rung 2 autopsy 2026-07-28:
@@ -532,6 +586,12 @@ SKILLS = {
     "find_symbol": ("find_symbol <binary> <name> — nm + PIE check; returns the "
                     "function's absolute address (non-PIE) or file offset (PIE)",
                     _skill_find_symbol),
+    "find_magic": ("find_magic <binary> [argv] — brute-verifies a format gate's "
+                   "magic prefix: learns the rejection text with garbage input, "
+                   "then tests short uppercase strings from the binary until one "
+                   "PASSES the gate. Returns the magic as text + hex (use the hex "
+                   "in discover_offset/deliver_argv prefix specs)",
+                   _skill_find_magic),
     "cyclic": ("cyclic <n> — print a De Bruijn pattern of length n (payload padding "
                "whose every 4-byte fragment locates its own offset)",
                _skill_cyclic),
