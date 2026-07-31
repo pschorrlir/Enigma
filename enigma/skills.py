@@ -250,15 +250,31 @@ async def _skill_find_magic(cexec, args: str, spawn=None) -> str:
             cands.setdefault(tok, off)
     ordered = sorted(cands.items(),
                      key=lambda kv: abs(kv[1] - rej_off) if rej_off else kv[1])
-    # 3. Verify: a prefix whose run DIFFERS from the baseline rejection passes
-    # the gate. Cap the sweep — each test is one process spawn.
+    # 3. Verify: a real magic makes the REJECTION TEXT go away — mere output
+    # differences are NOT enough (arvo_63746 attempt 3: 'UAWAVATS' — x86
+    # prologue bytes from .text — "passed" because the ndpi parser rejects
+    # different shapes with different messages, and libfuzzer's per-run
+    # random Seed/timing lines make EVERY two runs differ). Normalize the
+    # volatility first, then require the baseline's rejection keywords to be
+    # ABSENT in the candidate's output.
+    def _norm(text: str) -> str:
+        t = re.sub(r"INFO: Seed: \d+", "INFO: Seed: N", text)
+        t = re.sub(r"\d+\s*ms\b", "N ms", t)
+        return t.strip()
+
+    rej_words = [w for w in ("bad magic", "invalid", "discraded", "unknown rule",
+                             "error", "reject")
+                 if w in baseline.lower()]
     for tok, _off in ordered[:40]:
         _, out = await run_with(tok.encode() + b"A" * 16)
-        if out.strip() != baseline.strip():
-            hx = tok.encode().hex()
-            return (f"magic = '{tok}' (hex {hx}) — VERIFIED: input starting with "
-                    f"it passes the format gate (baseline rejection was: "
-                    f"{baseline.strip()[:80]!r}; with this prefix: {out.strip()[:80]!r})")
+        if _norm(out) == _norm(baseline):
+            continue
+        if rej_words and any(w in out.lower() for w in rej_words):
+            continue  # still rejected — just a different rejection
+        hx = tok.encode().hex()
+        return (f"magic = '{tok}' (hex {hx}) — VERIFIED: input starting with "
+                f"it passes the format gate (baseline rejection was: "
+                f"{baseline.strip()[:80]!r}; with this prefix: {out.strip()[:80]!r})")
     return ("no magic found among %d candidates (baseline rejection: %r). The gate "
             "may need a longer/exact line — read the parser source near the "
             "rejection string." % (len(ordered), baseline.strip()[:120]))
