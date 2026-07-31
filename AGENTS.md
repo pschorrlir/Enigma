@@ -138,6 +138,23 @@ Verdict: net same 0.0, but every pinned-lesson axis improved — the loop
 works; each run exposes the NEXT gap. Next gap to close: recv discipline +
 seed-first confirmation.
 
+**RUNG 6 SOLVED 2026-07-30 ~22:20 — attempt 5, 16 steps, 6 skill calls**
+(transcript `rung6_20260730T221539.jsonl`). Steps 1-8 recon, step 9
+`find_magic /target/rung6 argv` → verified PWN6 (the new skill's FIRST live
+use — the sub-task that killed attempts 1-4), step 12 discover_offset → 60,
+step 13 find_symbol, step 14 `deliver_argv hex:50574e36 + A*56 +
+p64(0x21a05)` → flag printed (p64 works: the injected NUL truncates the
+string after the 3 significant bytes and %s's terminator completes the
+pointer — the rung's core trick), done_claim REJECTED at 15 (flag not on
+disk — verified-DONE again), flag.txt written at 16. Arc: attempt 1 wrong
+magic (copied PWN5's), attempt 2 offset-by-3 (hand-measured vs
+discover_offset), attempt 3 magic-word guessing, attempt 4 strings-flood,
+attempt 5 solved. The fix that mattered: SKILL-COMPILE the fragile
+sub-task (find_magic), not more lessons. Rung 6 added 2026-07-30:
+constrained ret2win, string-parser bad bytes, text @ 0x20000
+(`homework/src/rung6_badchars.c`, solve_rung6.py PASS). Ladder is now 6
+rungs, all solved at least once.
+
 **RUNG 5 SOLVED 2026-07-30 ~11:30 — attempt 6, 17 steps, 3 skill calls.**
 Transcript `rung5_20260730T112914.jsonl`. The arc in one day: attempt 2
 (killed by power outage ~10 steps from the chain) → attempt 3 (found gate +
