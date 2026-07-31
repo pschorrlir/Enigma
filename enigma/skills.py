@@ -95,6 +95,7 @@ async def _skill_discover_offset(cexec, args: str, spawn=None) -> str:
     if len(parts) > hexidx:
         hx = parts[hexidx]
         hx = hx[2:] if hx.startswith("0x") else hx
+        hx = hx[4:] if hx.startswith("hex:") else hx  # deliver_argv grammar bleed-over
         try:
             prefix = bytes.fromhex(hx)
         except ValueError:
@@ -265,6 +266,14 @@ async def _skill_find_magic(cexec, args: str, spawn=None) -> str:
     rej_words = [w for w in ("bad magic", "invalid", "discraded", "unknown rule",
                              "error", "reject")
                  if w in baseline.lower()]
+    if not rej_words:
+        # No rejection banner at all (rung8: every input prints "ok") — output
+        # difference alone PROVES NOTHING (the 'ORIGIN'/'UAWAVATS' false
+        # positives). A magic can only be verified against a visible rejection.
+        return ("no rejection banner in the baseline run (%r) — this target does "
+                "not appear to have a magic gate (maybe a length/record format "
+                "instead — read the parser before brute-forcing)"
+                % baseline.strip()[:120])
     for tok, _off in ordered[:40]:
         _, out = await run_with(tok.encode() + b"A" * 16)
         if _norm(out) == _norm(baseline):
