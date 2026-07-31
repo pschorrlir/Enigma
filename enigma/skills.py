@@ -43,9 +43,11 @@ def parse_payload(spec: str) -> bytes:
 
     Terms separated by '+': '<char>*<count>' repeats, 'p32(0xADDR)' / 'p64(0xADDR)'
     little-endian packed addresses (hex or decimal), 'hex:DEADBEEF' raw bytes
-    (format-gate magics, e.g. hex:50574e3500000000 = 'PWN5' + 4 pad). Raises
-    ValueError on anything else so the caller can hand the message back to the
-    agent."""
+    (format-gate magics, e.g. hex:50574e3500000000 = 'PWN5' + 4 pad), and
+    'padto:N' pads with 'A' until the TOTAL length is N (ret-slot arithmetic:
+    hex:<magic> + padto:<offset> + p64(win) — no offset-minus-prefix math).
+    Raises ValueError on anything else so the caller can hand the message back
+    to the agent."""
     out = b""
     for term in spec.split("+"):
         term = term.strip().strip("'\"").strip()  # actor quotes whole specs: 'A*72 + p64(...)'
@@ -64,7 +66,18 @@ def parse_payload(spec: str) -> bytes:
         if m:
             out += bytes.fromhex(m.group(1))
             continue
-        raise ValueError(f"unparseable term {term!r} (want X*N, p64(0xADDR), or hex:...)")
+        m = re.fullmatch(r"padto:(\d+)", term)
+        if m:
+            # Pad with 'A' until the TOTAL length is N. Kills the recurring
+            # prefix-arithmetic miss (rung5-7): the agent knows the file
+            # offset of the ret slot but keeps botching offset-minus-prefix.
+            target = int(m.group(1))
+            if target < len(out):
+                raise ValueError("padto:%d but payload is already %d bytes"
+                                 % (target, len(out)))
+            out += b"A" * (target - len(out))
+            continue
+        raise ValueError(f"unparseable term {term!r} (want X*N, p64(0xADDR), hex:..., or padto:N)")
     if not out:
         raise ValueError("empty payload spec")
     return out
@@ -638,8 +651,10 @@ SKILLS = {
                       _skill_deliver_stdin),
     "deliver_argv": ("deliver_argv <binary> <spec> — write payload to a file and run "
                      "`<binary> <file>` (targets that read argv[1], not stdin). spec "
-                     "terms: X*N, p64(0xADDR), hex:DEADBEEF (format-gate magics). e.g. "
-                     "hex:50574e3500000000 + A*104 + p64(0x401955)",
+                     "terms: X*N, p64(0xADDR), hex:DEADBEEF (format-gate magics), "
+                     "padto:N (pad with A until TOTAL length is N — ret-slot "
+                     "arithmetic without the offset-minus-prefix math). e.g. "
+                     "hex:50574e36 + padto:60 + p64(0x21a05)",
                      _skill_deliver_argv),
     "pwn_stdin": ("pwn_stdin <binary> <steps> — INTERACTIVE: leak and deliver in "
                   "ONE process (required under ASLR/PIE). Steps: expect:<regex> "
