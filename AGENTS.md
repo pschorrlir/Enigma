@@ -138,6 +138,17 @@ Verdict: net same 0.0, but every pinned-lesson axis improved — the loop
 works; each run exposes the NEXT gap. Next gap to close: recv discipline +
 seed-first confirmation.
 
+**RUNG 7 SOLVED 2026-07-31 ~15:42 — attempt 5, 10 steps, 4 skill calls**
+(transcript `rung7_20260731T154241.jsonl`): find_magic → discover_offset
+112 → find_symbol → `deliver_argv hex:50574e37 + padto:112 + p64(0x21955)
++ p64(0x1337) + p64(0x21957)`. The padto:N term (added after attempt 4 had
+gadget+key+win ALL correct with A*112 instead of A*108) removed the #1
+recurring miss across rungs 5-7 — offset-minus-prefix arithmetic.
+**LADDER COMPLETE: 8/8 rungs solved.** Rung arc lessons: skill-compile
+fragile sub-tasks (find_magic), dialect-proof skill grammars (hex:
+tolerance, send-only pwn_tcp, padto), and pins change behavior only when
+the actor seat follows procedures (32b > 14b on compliance).
+
 **RUNG 8 SOLVED 2026-07-31 ~14:26 — attempt 2, 14 steps, 3 skill calls**
 (transcript `rung8_20260731T142625.jsonl`). The build-your-own-oracle rung:
 the agent DOUBTED THE SEED (the rung's core lesson) — wrote modified seeds
