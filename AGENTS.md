@@ -138,6 +138,16 @@ Verdict: net same 0.0, but every pinned-lesson axis improved — the loop
 works; each run exposes the NEXT gap. Next gap to close: recv discipline +
 seed-first confirmation.
 
+**SOLVE-RATE MATRIX 2026-07-31 ~00:51 (rungs 4-6 ×2, 3600s, 32b actor):
+5/6 SOLVES** (ladder_20260731T005135.json). rung5: 2/2 in **8 and 10
+steps**; rung6: 2/2 in **8 and 9 steps** (the rung that took 5 attempts to
+first-solve now solves in <10 steps twice in a row — the golden cards +
+find_magic + deliver_argv chain is STABLE); rung4: 1/2 (attempt 1 timed out
+on the pwn_tcp bare-spec misuse — fixed mid-matrix in a58cab4; attempt 2
+solved 56 steps). From zero solves in project history (07-28) to 5/6 with
+sub-10-step solves. Dreams between rungs produced +4 reflections each but
+stay python_tests-flavored; self-play still invents no verifiable tasks.
+
 **RUNG 6 SOLVED 2026-07-30 ~22:20 — attempt 5, 16 steps, 6 skill calls**
 (transcript `rung6_20260730T221539.jsonl`). Steps 1-8 recon, step 9
 `find_magic /target/rung6 argv` → verified PWN6 (the new skill's FIRST live
